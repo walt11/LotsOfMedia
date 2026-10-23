@@ -79,7 +79,13 @@ final class AppState {
     var browseAPI: PlexServerAPI? { api ?? selectedServerID.flatMap { ServerDirectory.shared.api(for: $0) } }
     var currentUserID: String? { user?.uuid ?? UserDefaults.standard.string(forKey: "currentUserUUID") }
     var currentHomeUser: PlexHomeUser? { homeUsers.first { $0.uuid == currentUserID } }
-    var canSwitchUsers: Bool { homeUsers.count > 1 }
+    /// Plex Home profiles belong to the Plex account: not offered while a Jellyfin server is in use.
+    var canSwitchUsers: Bool { homeUsers.count > 1 && selectedServer?.isJellyfin != true }
+    /// Signed in to the selected server as this Jellyfin user (nil for a Plex server).
+    var jellyfinUser: String? { selectedServer?.isJellyfin == true ? selectedServer?.jellyfinUserName ?? "Jellyfin user" : nil }
+    /// Who's browsing, as shown on the profile button and playlists: the Jellyfin user, else the Plex profile.
+    var profileName: String? { jellyfinUser ?? currentHomeUser?.title ?? user?.title }
+    var profileThumb: String? { jellyfinUser != nil ? nil : currentHomeUser?.thumb ?? user?.thumb }
     /// Token of the account that originally signed in; used to list/switch Home users.
     private var primaryToken: String? { Keychain.string(for: "primaryAccountToken") ?? accountToken }
     @ObservationIgnored private var lastContentRefresh = Date()
@@ -157,7 +163,7 @@ final class AppState {
         api = nil
         status = .idle
         ServerDirectory.shared.replaceSessionServers(discovered)
-        servers = discovered
+        servers = ServerDirectory.shared.servers
         Keychain.set(token, for: "accountToken")
         accountToken = token
         setUser(user)
@@ -245,7 +251,17 @@ final class AppState {
         await connect()
     }
 
+    /// A Jellyfin server just signed in to: saved, selected and connected.
+    func addJellyfinServer(_ server: PlexServer) async {
+        ServerDirectory.shared.upsert(server)
+        if let uri = server.connections.first?.uri { ServerDirectory.shared.setEndpoint(uri, for: server.id) }
+        servers = ServerDirectory.shared.servers
+        select(serverID: server.id)
+        await connect()
+    }
+
     func removeServer(_ id: String) {
+        if let server = ServerDirectory.shared.server(id: id), server.isJellyfin { Task { await JellyfinAuth.signOut(server) } }
         ServerDirectory.shared.remove(id: id)
         servers = ServerDirectory.shared.servers
         if selectedServerID == id { select(serverID: servers.first?.id) }

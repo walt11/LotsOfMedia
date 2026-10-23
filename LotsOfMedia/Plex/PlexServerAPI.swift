@@ -21,6 +21,9 @@ struct PlexServerAPI: Sendable {
     /// account's sign-in expired.
     static let unauthorized = Notification.Name("PlexServerAPI.unauthorized")
 
+    /// A Jellyfin server: requests are answered through `JellyfinBridge`.
+    var isJellyfin: Bool { serverID.hasPrefix(JellyfinBridge.idPrefix) }
+
     // MARK: URL building
 
     func url(_ path: String, query: [URLQueryItem] = [], includeToken: Bool = false) -> URL {
@@ -31,7 +34,13 @@ struct PlexServerAPI: Sendable {
         comps.path = basePath + (parts[0].hasPrefix("/") ? parts[0] : "/" + parts[0])
         var items = parts.count > 1 ? (URLComponents(string: "?" + parts[1])?.queryItems ?? []) : []
         items += query
-        if includeToken, let token { items.append(URLQueryItem(name: "X-Plex-Token", value: token)) }
+        if isJellyfin {
+            // Jellyfin takes its token as `ApiKey` (Jellyfin 12 no longer accepts `api_key`), and has no
+            // use for Plex's client details.
+            let signed = includeToken || items.contains { $0.name == "X-Plex-Token" }
+            items.removeAll { $0.name.hasPrefix("X-Plex-") }
+            if signed, let token { items.append(URLQueryItem(name: "ApiKey", value: token)) }
+        } else if includeToken, let token { items.append(URLQueryItem(name: "X-Plex-Token", value: token)) }
         comps.queryItems = items.isEmpty ? nil : items
         // URLComponents leaves '+' unescaped in queries, which Plex decodes as space.
         comps.percentEncodedQuery = comps.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
@@ -41,6 +50,11 @@ struct PlexServerAPI: Sendable {
     /// Resized artwork via the server's photo transcoder.
     func imageURL(_ path: String?, width: Int, height: Int) -> URL? {
         guard let path, !path.isEmpty else { return nil }
+        if isJellyfin {
+            if path.hasPrefix("http") { return URL(string: path) }
+            return url(path, query: [URLQueryItem(name: "maxWidth", value: "\(width)"), URLQueryItem(name: "maxHeight", value: "\(height)"),
+                                     URLQueryItem(name: "quality", value: "90")], includeToken: true)
+        }
         return url("/photo/:/transcode", query: [
             URLQueryItem(name: "width", value: "\(width)"), URLQueryItem(name: "height", value: "\(height)"),
             URLQueryItem(name: "minSize", value: "1"), URLQueryItem(name: "upscale", value: "1"),
@@ -53,6 +67,10 @@ struct PlexServerAPI: Sendable {
     @discardableResult
     func data(_ path: String, query: [URLQueryItem] = [], method: String = "GET",
               headers: [String: String] = [:], timeout: TimeInterval = 20) async throws -> (Data, HTTPURLResponse) {
+        if isJellyfin {
+            let body = try await JellyfinBridge(api: self).respond(path: path, query: query, method: method, headers: headers)
+            return (body, HTTPURLResponse(url: baseURL, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
         var req = URLRequest(url: url(path, query: query), timeoutInterval: timeout)
         req.httpMethod = method
         PlexClient.headers(token: token).forEach { req.setValue($1, forHTTPHeaderField: $0) }
@@ -249,6 +267,11 @@ struct PlexServerAPI: Sendable {
     }
 
     func createPlaylist(title: String, items: [PlexMetadata]) async throws -> PlexMetadata {
+        if isJellyfin {
+            let query = try PlaylistCreation.query(title: title, items: items, machineIdentifier: "jellyfin", opaqueIDs: true)
+            guard let playlist = try await container("/playlists", query: query, method: "POST").metadata.first else { throw PlexError.invalidResponse }
+            return playlist
+        }
         _ = try PlaylistCreation.query(title: title, items: items, machineIdentifier: "validate")
         guard let machine = try await container("/identity").machineIdentifier, !machine.isEmpty else { throw PlexError.invalidResponse }
         let query = try PlaylistCreation.query(title: title, items: items, machineIdentifier: machine)
@@ -258,6 +281,11 @@ struct PlexServerAPI: Sendable {
     }
 
     func addToPlaylist(_ ratingKey: String, items: [PlexMetadata]) async throws {
+        if isJellyfin {
+            let query = try PlaylistCreation.query(title: "Add", items: items, machineIdentifier: "jellyfin", opaqueIDs: true)
+            try await data("/playlists/\(ratingKey)/items", query: query.filter { $0.name == "uri" }, method: "PUT")
+            return
+        }
         guard let machine = try await container("/identity").machineIdentifier, !machine.isEmpty else { throw PlexError.invalidResponse }
         let query = try PlaylistCreation.query(title: "Add", items: items, machineIdentifier: machine)
         try await data("/playlists/\(ratingKey)/items", query: query.filter { $0.name == "uri" }, method: "PUT")
@@ -325,6 +353,15 @@ struct PlexServerAPI: Sendable {
         ])
     }
 
+    /// Your rating for an item, 0–10 (two per star); nil clears it.
+    func rate(_ ratingKey: String, rating: Double?) async throws {
+        try await data("/:/rate", query: [
+            URLQueryItem(name: "key", value: ratingKey),
+            URLQueryItem(name: "identifier", value: "com.plexapp.plugins.library"),
+            URLQueryItem(name: "rating", value: rating.map { String(format: "%g", $0) } ?? "-1"),
+        ], method: "PUT")
+    }
+
     /// Takes an item off Continue Watching without changing its progress.
     func removeFromContinueWatching(_ ratingKey: String) async throws {
         try await data("/actions/removeFromContinueWatching", query: [URLQueryItem(name: "ratingKey", value: ratingKey)], method: "PUT")
@@ -358,13 +395,14 @@ struct PageRequestState {
 
 /// Regular Plex playlists require at least one item and a single media category.
 enum PlaylistCreation {
-    static func query(title: String, items: [PlexMetadata], machineIdentifier: String) throws -> [URLQueryItem] {
+    /// `opaqueIDs`: the server's item IDs aren't numbers (Jellyfin).
+    static func query(title: String, items: [PlexMetadata], machineIdentifier: String, opaqueIDs: Bool = false) throws -> [URLQueryItem] {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { throw PlexError.unsupported("Enter a playlist name.") }
         guard !items.isEmpty else { throw PlexError.unsupported("Choose at least one song or video.") }
         let audio = items.allSatisfy { $0.kind == .track }
         guard audio || items.allSatisfy(\.isPlayableVideo) else { throw PlexError.unsupported("Keep songs and videos in separate playlists.") }
-        guard !machineIdentifier.isEmpty, items.allSatisfy({ !$0.ratingKey.isEmpty && $0.ratingKey.allSatisfy(\.isNumber) }) else {
+        guard !machineIdentifier.isEmpty, items.allSatisfy({ !$0.ratingKey.isEmpty && (opaqueIDs || $0.ratingKey.allSatisfy(\.isNumber)) }) else {
             throw PlexError.unsupported("These items do not have valid library identifiers.")
         }
         var seen = Set<String>()

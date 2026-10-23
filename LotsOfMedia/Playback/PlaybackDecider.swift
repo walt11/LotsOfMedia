@@ -37,6 +37,16 @@ enum StreamingQuality: String, CaseIterable, Identifiable {
     }
 }
 
+/// Playback speeds offered for video (both players, iPhone and Apple TV).
+enum PlaybackSpeeds {
+    static let video: [Float] = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3, 4]
+}
+
+/// "+150 ms", "−50 ms", "Off" for the audio sync offset.
+enum AudioSyncLabel {
+    static func text(_ ms: Int) -> String { ms == 0 ? "Off" : (ms > 0 ? "+\(ms) ms" : "−\(-ms) ms") }
+}
+
 enum PlaybackDecider {
     static let nativeVideoContainers: Set<String> = ["mp4", "m4v", "mov"]
     static let nativeVideoCodecs: Set<String> = ["h264", "hevc", "h265", "mpeg4"]
@@ -137,9 +147,13 @@ enum PlaybackDecider {
     static func transcodeURL(api: PlexServerAPI, item: PlexMetadata, quality: StreamingQuality, sessionID: String,
                              isLocal: Bool, music: Bool = false, musicBitrate: Int = 0, burnSubtitleID: Int? = nil,
                              allowHEVC: Bool = true) -> URL {
+        if api.isJellyfin {
+            return JellyfinBridge.transcodeURL(api: api, item: item, quality: quality, sessionID: sessionID, music: music,
+                                               musicBitrate: musicBitrate, burnSubtitleID: burnSubtitleID, allowHEVC: allowHEVC)
+        }
         var q: [URLQueryItem] = [
             URLQueryItem(name: "path", value: "/library/metadata/\(item.ratingKey)"),
-            URLQueryItem(name: "mediaIndex", value: "0"),
+            URLQueryItem(name: "mediaIndex", value: "\(item.primaryMediaIndex)"),
             URLQueryItem(name: "partIndex", value: "0"),
             URLQueryItem(name: "protocol", value: "hls"),
             URLQueryItem(name: "fastSeek", value: "1"),

@@ -267,7 +267,7 @@ final class VideoPlaybackController: ObservableObject, VideoQueueing {
             if player.rate != 0 { player.rate = speed }
         }
     }
-    static let speeds: [Float] = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
+    static let speeds = PlaybackSpeeds.video
 
     func jump(to chapter: PlexChapter) {
         player.seek(to: CMTime(value: CMTimeValue(chapter.startTimeOffset), timescale: 1000), toleranceBefore: .zero, toleranceAfter: .zero)

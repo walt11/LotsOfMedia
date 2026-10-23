@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 // MARK: - Container
 
@@ -198,6 +199,34 @@ struct PlexTag: Codable, Hashable {
     }
 }
 
+/// One site's score for a title (`Rating` on detail responses).
+struct PlexRatingSource: Codable, Hashable {
+    /// Which site and badge: "imdb://image.rating", "rottentomatoes://image.rating.ripe"…
+    var image: String
+    var value: Double
+    /// "critic" or "audience".
+    var type: String?
+
+    init(image: String, value: Double, type: String?) { self.image = image; self.value = value; self.type = type }
+
+    enum CodingKeys: String, CodingKey { case image, value, type }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        image = c.lossyString(.image) ?? ""
+        value = c.lossyDouble(.value) ?? 0
+        type = c.lossyString(.type)
+    }
+}
+
+/// A score ready to show: "IMDb 7.8", "Rotten Tomatoes 91%".
+struct ExternalScore: Hashable {
+    enum Site: String { case imdb = "IMDb", tomatoes = "Rotten Tomatoes", tomatoesAudience = "Audience", tmdb = "TMDB", tvdb = "TVDB", community = "Rating" }
+    var site: Site
+    /// Rotten Tomatoes: fresh / upright (or rotten / spilled).
+    var positive: Bool
+    var text: String
+}
+
 /// Intro / credits markers (PMS intro & credit detection).
 struct PlexMarker: Codable, Hashable {
     var type: String
@@ -222,7 +251,9 @@ struct PlexChapter: Codable, Hashable {
     var title: String
     var startTimeOffset: Int
     var endTimeOffset: Int?
-    enum CodingKeys: String, CodingKey { case tag, startTimeOffset, endTimeOffset, index }
+    /// The chapter's picture, when the server made one.
+    var thumb: String?
+    enum CodingKeys: String, CodingKey { case tag, startTimeOffset, endTimeOffset, index, thumb }
     init(title: String, startTimeOffset: Int, endTimeOffset: Int?) {
         self.title = title; self.startTimeOffset = startTimeOffset; self.endTimeOffset = endTimeOffset
     }
@@ -231,12 +262,14 @@ struct PlexChapter: Codable, Hashable {
         startTimeOffset = c.lossyInt(.startTimeOffset) ?? 0
         endTimeOffset = c.lossyInt(.endTimeOffset)
         title = c.lossyString(.tag) ?? "Chapter \(c.lossyInt(.index) ?? 0)"
+        thumb = c.lossyString(.thumb)
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(title, forKey: .tag)
         try c.encode(startTimeOffset, forKey: .startTimeOffset)
         try c.encodeIfPresent(endTimeOffset, forKey: .endTimeOffset)
+        try c.encodeIfPresent(thumb, forKey: .thumb)
     }
 }
 
@@ -317,8 +350,10 @@ struct PlexPart: Codable, Hashable {
     var size: Int64?
     var container: String?
     var streams: [PlexStream]
+    /// "sd" when the server made preview thumbnails for scrubbing (Plex's video preview thumbnails).
+    var indexes: String?
 
-    enum CodingKeys: String, CodingKey { case id, key, duration, file, size, container, streams = "Stream" }
+    enum CodingKeys: String, CodingKey { case id, key, duration, file, size, container, indexes, streams = "Stream" }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -329,6 +364,7 @@ struct PlexPart: Codable, Hashable {
         size = c.lossyInt64(.size)
         container = c.lossyString(.container)
         streams = c.lossyArray(PlexStream.self, .streams)
+        indexes = c.lossyString(.indexes)
     }
 
     var audioStreams: [PlexStream] { streams.filter { $0.streamType == 2 } }
@@ -440,6 +476,13 @@ struct PlexMetadata: Codable, Hashable, Identifiable {
     var studio: String?
     var rating: Double?
     var audienceRating: Double?
+    /// Your own rating, 0–10 (Plex shows it as 0–5 stars).
+    var userRating: Double?
+    /// Scores from IMDb, Rotten Tomatoes and TMDB (detail requests on servers with the newer agents).
+    var ratings: [PlexRatingSource] = []
+    /// Older agents: which site `rating` / `audienceRating` came from ("rottentomatoes://image.rating.ripe").
+    var ratingImage: String?
+    var audienceRatingImage: String?
     var librarySectionID: Int?
     var librarySectionTitle: String?
     var playlistItemID: String?
@@ -460,8 +503,9 @@ struct PlexMetadata: Codable, Hashable, Identifiable {
         case parentTitle, grandparentTitle, parentRatingKey, grandparentRatingKey, parentKey, grandparentKey
         case thumb, art, parentThumb, grandparentThumb, grandparentArt, duration, viewOffset, viewCount
         case leafCount, viewedLeafCount, childCount, addedAt, lastViewedAt, viewedAt, originallyAvailableAt, contentRating
-        case studio, rating, audienceRating, librarySectionID, librarySectionTitle, playlistType, playlistItemID, smart, composite
+        case studio, rating, audienceRating, userRating, ratingImage, audienceRatingImage, librarySectionID, librarySectionTitle, playlistType, playlistItemID, smart, composite
         case media = "Media", genres = "Genre", directors = "Director", roles = "Role", markers = "Marker", chapters = "Chapter"
+        case ratings = "Rating"
     }
 
     init(from decoder: Decoder) throws {
@@ -506,6 +550,10 @@ struct PlexMetadata: Codable, Hashable, Identifiable {
         studio = c.lossyString(.studio)
         rating = c.lossyDouble(.rating)
         audienceRating = c.lossyDouble(.audienceRating)
+        userRating = c.lossyDouble(.userRating)
+        ratingImage = c.lossyString(.ratingImage)
+        audienceRatingImage = c.lossyString(.audienceRatingImage)
+        ratings = c.lossyArray(PlexRatingSource.self, .ratings)
         librarySectionID = c.lossyInt(.librarySectionID)
         librarySectionTitle = c.lossyString(.librarySectionTitle)
         playlistItemID = c.lossyString(.playlistItemID)
@@ -594,6 +642,39 @@ extension PlexMetadata {
 
     var backdrop: String? { art ?? grandparentArt }
 
+    /// IMDb, Rotten Tomatoes (critics and audience) and TMDB scores, from whichever the server has.
+    var externalScores: [ExternalScore] {
+        var sources = ratings
+        if sources.isEmpty {
+            if let rating, let ratingImage { sources.append(PlexRatingSource(image: ratingImage, value: rating, type: "critic")) }
+            if let audienceRating, let audienceRatingImage { sources.append(PlexRatingSource(image: audienceRatingImage, value: audienceRating, type: "audience")) }
+        }
+        var out: [ExternalScore] = []
+        for source in sources where source.value > 0 {
+            let image = source.image.lowercased()
+            let percent = "\(Int((source.value * 10).rounded()))%"
+            let score: ExternalScore?
+            if image.hasPrefix("imdb://") {
+                score = ExternalScore(site: .imdb, positive: true, text: String(format: "%.1f", source.value))
+            } else if image.hasPrefix("rottentomatoes://") {
+                // The badge after the scheme: "image.rating.ripe", "…rotten", "…upright", "…spilled".
+                let badge = image.dropFirst("rottentomatoes://".count)
+                let critic = source.type != "audience" && !badge.contains("upright") && !badge.contains("spilled")
+                score = ExternalScore(site: critic ? .tomatoes : .tomatoesAudience,
+                                      positive: !(badge.contains("rotten") || badge.contains("spilled")), text: percent)
+            } else if image.hasPrefix("themoviedb://") {
+                score = ExternalScore(site: .tmdb, positive: true, text: percent)
+            } else if image.hasPrefix("thetvdb://") {
+                score = ExternalScore(site: .tvdb, positive: true, text: String(format: "%.1f", source.value))
+            } else if image.hasPrefix("jellyfin://") {
+                score = ExternalScore(site: source.type == "critic" ? .tomatoes : .community, positive: source.value >= 6,
+                                      text: source.type == "critic" ? percent : String(format: "%.1f", source.value))
+            } else { score = nil }
+            if let score, !out.contains(where: { $0.site == score.site }) { out.append(score) }
+        }
+        return out
+    }
+
     var displayTitle: String {
         if kind == .episode, let gp = grandparentTitle { return gp }
         return title
@@ -611,8 +692,50 @@ extension PlexMetadata {
         }
     }
 
-    var primaryMedia: PlexMedia? { media.first }
-    var primaryPart: PlexPart? { media.first?.parts.first }
+    /// The version that plays and downloads: the one chosen on the item's page, else the first.
+    var primaryMedia: PlexMedia? { media.indices.contains(primaryMediaIndex) ? media[primaryMediaIndex] : nil }
+    var primaryPart: PlexPart? { primaryMedia?.parts.first }
+    /// Position of `primaryMedia` among the item's versions (the server's `mediaIndex`).
+    var primaryMediaIndex: Int {
+        guard media.count > 1, let id = MediaVersionChoice.mediaID(for: ratingKey) else { return 0 }
+        return media.firstIndex { $0.id == id } ?? 0
+    }
+}
+
+/// Which version of a title (4K or 1080p, a director's cut…) plays and downloads, chosen on
+/// its page. Remembered per title; a version that's gone from the server falls back to the first.
+@Observable
+final class MediaVersionChoice: @unchecked Sendable {
+    static let shared = MediaVersionChoice()
+    private static let key = "mediaVersionChoice"
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var choices: [String: Int] =
+        UserDefaults.standard.dictionary(forKey: key) as? [String: Int] ?? [:]
+    /// Read by views so they redraw when a choice changes.
+    private(set) var revision = 0
+
+    static func mediaID(for ratingKey: String) -> Int? { lock.withLock { choices[ratingKey] } }
+
+    func choose(_ media: PlexMedia, of item: PlexMetadata) {
+        Self.lock.withLock {
+            Self.choices[item.ratingKey] = media.id == item.media.first?.id ? nil : media.id
+            UserDefaults.standard.set(Self.choices, forKey: Self.key)
+        }
+        revision += 1
+    }
+}
+
+extension PlexMedia {
+    /// One line naming a version: "4K · HEVC · Dolby Vision · 58.2 GB".
+    func versionLabel(size: Int64? = nil) -> String {
+        let video = parts.first?.streams.first { $0.streamType == 1 }
+        var bits = [resolutionLabel, videoCodec?.uppercased()].compactMap { $0 }
+        if video?.doviPresent == true { bits.append("Dolby Vision") } else if video?.colorTrc == "smpte2084" { bits.append("HDR10") }
+        else if video?.colorTrc == "arib-std-b67" { bits.append("HLG") }
+        if let a = audioCodec { bits.append(a.uppercased() + (audioChannels.map { $0 > 2 ? " \($0 == 6 ? "5.1" : $0 == 8 ? "7.1" : "\($0)ch")" : "" } ?? "")) }
+        if let bytes = size ?? parts.first?.size { bits.append(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) }
+        return bits.isEmpty ? "Version \(id)" : bits.joined(separator: " · ")
+    }
 }
 
 // MARK: - plex.tv resources
@@ -659,10 +782,30 @@ struct PlexServer: Codable, Hashable, Identifiable {
     var presence: Bool?
     var connections: [PlexConnection]
     var isManual: Bool = false
+    /// Jellyfin servers: the signed-in user (their ID is in every library request).
+    var jellyfinUserID: String?
+    var jellyfinUserName: String?
 
     var id: String { clientIdentifier }
+    var isJellyfin: Bool { clientIdentifier.hasPrefix(JellyfinBridge.idPrefix) }
+    var kindName: String { isJellyfin ? "Jellyfin" : "Plex" }
 
-    enum CodingKeys: String, CodingKey { case name, clientIdentifier, accessToken, owned, productVersion, presence, connections, isManual, provides }
+    /// Whether the address last used (else the best advertised one) is on the home network.
+    var lastConnectionIsLocal: Bool? {
+        guard let uri = ServerDirectory.shared.endpointURI(for: id) ?? connections.sorted(by: { $0.rank < $1.rank }).first?.uri else { return nil }
+        return connections.first { $0.uri == uri }?.local ?? AppStateLocality.looksLocal(uri)
+    }
+
+    /// "Plex · Local", "Jellyfin · Remote": the kind of server and how it's reached.
+    func kindLabel(local: Bool?) -> String {
+        guard let local else { return kindName }
+        return kindName + (local ? " · Local" : " · Remote")
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name, clientIdentifier, accessToken, owned, productVersion, presence, connections, isManual, provides
+        case jellyfinUserID, jellyfinUserName
+    }
 
     init(name: String, clientIdentifier: String, accessToken: String?, owned: Bool, connections: [PlexConnection], isManual: Bool) {
         self.name = name; self.clientIdentifier = clientIdentifier; self.accessToken = accessToken
@@ -679,6 +822,8 @@ struct PlexServer: Codable, Hashable, Identifiable {
         presence = c.lossyBool(.presence)
         connections = c.lossyArray(PlexConnection.self, .connections)
         isManual = c.lossyBool(.isManual) ?? false
+        jellyfinUserID = c.lossyString(.jellyfinUserID)
+        jellyfinUserName = c.lossyString(.jellyfinUserName)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -691,6 +836,8 @@ struct PlexServer: Codable, Hashable, Identifiable {
         try c.encodeIfPresent(presence, forKey: .presence)
         try c.encode(connections, forKey: .connections)
         try c.encode(isManual, forKey: .isManual)
+        try c.encodeIfPresent(jellyfinUserID, forKey: .jellyfinUserID)
+        try c.encodeIfPresent(jellyfinUserName, forKey: .jellyfinUserName)
     }
 }
 

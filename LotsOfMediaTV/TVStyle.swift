@@ -200,7 +200,18 @@ struct TVQualityChips: View {
             else if video?.colorTrc == "arib-std-b67" { out.append("HLG") }
             if let ch = media.audioChannels, ch > 2 { out.append(ch >= 8 ? "7.1" : ch >= 6 ? "5.1" : "\(ch)CH") }
         }
-        if let r = item.audienceRating ?? item.rating { out.append(String(format: "★ %.1f", r)) }
+        let scores = item.externalScores
+        if scores.isEmpty, let r = item.audienceRating ?? item.rating { out.append(String(format: "★ %.1f", r)) }
+        for score in scores.prefix(3) {
+            switch score.site {
+            case .imdb: out.append("IMDb \(score.text)")
+            case .tomatoes: out.append("\(score.positive ? "🍅" : "🟢") \(score.text)")
+            case .tomatoesAudience: out.append("🍿 \(score.text)")
+            case .tmdb: out.append("TMDB \(score.text)")
+            case .tvdb: out.append("TVDB \(score.text)")
+            case .community: out.append("★ \(score.text)")
+            }
+        }
         return out
     }
 }

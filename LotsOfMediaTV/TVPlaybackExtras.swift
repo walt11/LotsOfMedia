@@ -140,3 +140,68 @@ struct TVUpNextCard: View {
         .focusSection()
     }
 }
+
+/// Apple TV sound output choices (Settings → Playback).
+enum TVAudioOutput {
+    /// Sends Dolby and DTS untouched to a receiver or soundbar (the built-in player; Apple's
+    /// player already passes Dolby through when the TV's audio format allows it).
+    static var passthrough: Bool {
+        get { UserDefaults.standard.bool(forKey: "tv.audio.passthrough") }
+        set { UserDefaults.standard.set(newValue, forKey: "tv.audio.passthrough") }
+    }
+    /// Surround soundtracks are mixed down to two channels (for TV speakers or headphones).
+    static var stereoOnly: Bool {
+        get { UserDefaults.standard.bool(forKey: "tv.audio.stereoOnly") }
+        set { UserDefaults.standard.set(newValue, forKey: "tv.audio.stereoOnly"); applyChannelLimit() }
+    }
+
+    /// Asks tvOS for two output channels, or as many as the output supports.
+    static func applyChannelLimit() {
+        let session = AVAudioSession.sharedInstance()
+        let channels = stereoOnly ? 2 : session.maximumOutputNumberOfChannels
+        try? session.setPreferredOutputNumberOfChannels(max(1, min(channels, session.maximumOutputNumberOfChannels)))
+    }
+}
+
+enum TVSpeedLabel {
+    static func text(_ rate: Float) -> String { rate == 1 ? "Normal" : String(format: "%g×", rate) }
+}
+
+/// A video's chapters as the player's navigation markers, with a picture for each: the chapter
+/// image the server made, else the preview thumbnail at the chapter's start.
+@MainActor
+enum TVChapterMarkers {
+    static func groups(for item: PlexMetadata, api: PlexServerAPI, session: TVSession) async -> [AVNavigationMarkersGroup] {
+        let chapters = item.chapters
+        guard !chapters.isEmpty else { return [] }
+        let previews = chapters.contains { $0.thumb == nil } ? await ScrubPreviews.load(api: api, item: item) : nil
+        let durationMs = item.duration ?? 0
+        var markers: [AVTimedMetadataGroup] = []
+        for (i, chapter) in chapters.enumerated() {
+            let endMs = chapter.endTimeOffset ?? (i + 1 < chapters.count ? chapters[i + 1].startTimeOffset : durationMs)
+            let range = CMTimeRange(start: CMTime(value: CMTimeValue(chapter.startTimeOffset), timescale: 1000),
+                                    end: CMTime(value: CMTimeValue(max(endMs, chapter.startTimeOffset + 1000)), timescale: 1000))
+            var metadata: [AVMetadataItem] = []
+            let title = AVMutableMetadataItem()
+            title.identifier = .commonIdentifierTitle
+            title.value = chapter.title as NSString
+            title.extendedLanguageTag = "und"
+            metadata.append(title)
+            var image: UIImage?
+            if let thumb = chapter.thumb, let url = session.imageURL(thumb, width: 480, height: 270) {
+                image = await ImageLoader.shared.image(for: url)
+            }
+            if image == nil { image = await previews?.image(atMs: chapter.startTimeOffset + 5000) }
+            if let data = image?.jpegData(compressionQuality: 0.8) {
+                let art = AVMutableMetadataItem()
+                art.identifier = .commonIdentifierArtwork
+                art.value = data as NSData
+                art.dataType = kCMMetadataBaseDataType_JPEG as String
+                art.extendedLanguageTag = "und"
+                metadata.append(art)
+            }
+            markers.append(AVTimedMetadataGroup(items: metadata, timeRange: range))
+        }
+        return [AVNavigationMarkersGroup(title: "Chapters", timedNavigationMarkers: markers)]
+    }
+}

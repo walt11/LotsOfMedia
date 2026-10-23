@@ -71,6 +71,7 @@ private struct TVPlayerRepresentable: UIViewControllerRepresentable {
         vc.allowsPictureInPicturePlayback = false
         vc.player = context.coordinator.player
         vc.transportBarCustomMenuItems = [TVSleepTimer.shared.menu()]
+        vc.speeds = PlaybackSpeeds.video.map { AVPlaybackSpeed(rate: $0, localizedName: TVSpeedLabel.text($0)) }
         context.coordinator.viewController = vc
         context.coordinator.start()
         return vc
@@ -132,6 +133,7 @@ final class TVPlaybackController: NSObject {
         self.onFinish = onFinish
         super.init()
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+        TVAudioOutput.applyChannelLimit()
     }
 
     func start() {
@@ -243,6 +245,14 @@ final class TVPlaybackController: NSObject {
         guard !stopped, id == loadID, player.currentItem === avItem else { return }
         player.play()
         lastReport = .distantPast
+
+        // Chapters in the player's info panel, each with its picture (or the preview frame there).
+        if item.isPlayableVideo, !item.chapters.isEmpty {
+            Task { [session] in
+                let groups = await TVChapterMarkers.groups(for: item, api: api, session: session)
+                if player.currentItem === avItem, !groups.isEmpty { avItem.navigationMarkerGroups = groups }
+            }
+        }
 
         // Artwork for the info panel and the Now Playing screen, once it loads.
         let artPath = item.kind == .track ? (item.parentThumb ?? item.thumb) : (item.kind == .episode ? item.grandparentThumb ?? item.thumb : item.thumb)

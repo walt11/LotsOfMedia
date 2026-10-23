@@ -10,6 +10,10 @@ struct SmartDownloadRule: Codable, Identifiable, Hashable {
     var keepCount: Int
     /// Remove episodes once they're fully watched.
     var deleteWatched: Bool
+    /// Also download Specials (season 0). Off unless chosen, so a long run of extras
+    /// doesn't take the place of the next real episodes. (Optional: older saved rules lack it.)
+    var includeSpecials: Bool? = nil
+    var includesSpecials: Bool { includeSpecials ?? false }
 
     var id: String { serverID + "_" + showRatingKey }
 }
@@ -88,7 +92,7 @@ final class SmartDownloads {
 
             // Queue the next N unwatched episodes (in-progress ones count as unwatched).
             guard let leaves else { continue }
-            let upcoming = leaves.filter { ($0.viewCount ?? 0) == 0 }.prefix(rule.keepCount)
+            let upcoming = leaves.filter { ($0.viewCount ?? 0) == 0 && (rule.includesSpecials || $0.parentIndex != 0) }.prefix(rule.keepCount)
             manager.enqueue(Array(upcoming), serverID: rule.serverID, batchTitle: rule.showTitle)
         }
     }

@@ -96,7 +96,7 @@ struct TVDetailView: View {
                 HStack(spacing: 14) {
                     let meta = shown.tvMetaLine
                     if !meta.isEmpty { Text(meta).font(.callout).foregroundStyle(.secondary) }
-                    TVQualityChips(item: shown)
+                    TVQualityChips(item: shown).id(MediaVersionChoice.shared.revision)
                 }
                 if let tagline = shown.tagline, !tagline.isEmpty { Text(tagline).font(.headline).italic() }
                 if let summary = shown.summary, !summary.isEmpty {
@@ -134,6 +134,8 @@ struct TVDetailView: View {
                     Button { playing = TVPlayRequest(item: trailer, resume: false) } label: { Label("Trailer", systemImage: "film") }
                 }
                 watchedButton
+                ratingMenu
+                if shown.media.count > 1 { versionMenu }
                 if let part = shown.primaryPart, part.audioStreams.count > 1 || !part.subtitleStreams.isEmpty {
                     streamMenu(part)
                 }
@@ -148,6 +150,7 @@ struct TVDetailView: View {
                     Button { playing = TVPlayRequest(item: trailer, resume: false) } label: { Label("Trailer", systemImage: "film") }
                 }
                 watchedButton
+                ratingMenu
             } else if shown.kind == .season {
                 watchedButton
                     .focused($primaryFocused)
@@ -166,6 +169,36 @@ struct TVDetailView: View {
             }
         }
         .buttonStyle(TVActionStyle())
+    }
+
+    /// Your own 1–5 star rating.
+    private var ratingMenu: some View {
+        let stars = Int(((shown.userRating ?? 0) / 2).rounded())
+        return Menu {
+            ForEach((1...5).reversed(), id: \.self) { n in
+                Button { Task { await session.rate(shown, stars: n) } } label: {
+                    Text(String(repeating: "★", count: n) + String(repeating: "☆", count: 5 - n) + (n == stars ? "  ✓" : ""))
+                }
+            }
+            if stars > 0 { Button("Clear Rating") { Task { await session.rate(shown, stars: 0) } } }
+        } label: {
+            Label(stars > 0 ? String(repeating: "★", count: stars) : "Rate", systemImage: stars > 0 ? "star.fill" : "star")
+        }
+    }
+
+    /// Which of the title's files plays: 4K or 1080p, an extended cut…
+    private var versionMenu: some View {
+        let _ = MediaVersionChoice.shared.revision
+        let current = shown.primaryMediaIndex
+        return Menu {
+            ForEach(Array(shown.media.enumerated()), id: \.offset) { i, media in
+                Button { MediaVersionChoice.shared.choose(media, of: shown) } label: {
+                    if i == current { Label(media.versionLabel(), systemImage: "checkmark") } else { Text(media.versionLabel()) }
+                }
+            }
+        } label: {
+            Label(shown.primaryMedia?.resolutionLabel.map { "Version · \($0)" } ?? "Version", systemImage: "square.stack.3d.up")
+        }
     }
 
     /// Audio and subtitle choice, saved on the server (so Plex and the iPhone app use it too).

@@ -29,11 +29,13 @@ final class ServerDirectory: @unchecked Sendable {
         _endpoints = [:]
     }
 
-    /// A different account must never inherit manually supplied credentials.
+    /// A different account must never inherit manually supplied credentials. Jellyfin servers
+    /// have their own sign-in, separate from Plex accounts, and stay.
     func replaceSessionServers(_ discovered: [PlexServer]) {
         lock.withLock {
-            _servers = discovered
-            _endpoints = [:]
+            let jellyfin = _servers.filter(\.isJellyfin)
+            _servers = discovered + jellyfin
+            _endpoints = _endpoints.filter { key, _ in jellyfin.contains { $0.id == key } }
             persist()
         }
     }

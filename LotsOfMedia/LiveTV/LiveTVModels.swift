@@ -370,7 +370,9 @@ extension PlexServerAPI {
     }
 
     func liveDVRs() async throws -> [LiveDVR] {
-        try await decodeMC(LiveDVR.self, "/livetv/dvrs", key: "Dvr")
+        // Live TV here is Plex's DVR; a Jellyfin server has no Live TV tab.
+        if isJellyfin { return [] }
+        return try await decodeMC(LiveDVR.self, "/livetv/dvrs", key: "Dvr")
     }
 
     func liveChannels(epg: String) async throws -> [LiveChannel] {

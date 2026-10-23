@@ -1147,9 +1147,9 @@ struct PlaylistDetailView: View {
                 .lineLimit(2)
                 .onAppear { headerTitleVisible = true }
                 .onDisappear { headerTitleVisible = false }
-            if let owner = app.currentHomeUser?.title ?? app.user?.title {
+            if let owner = app.profileName {
                 HStack(spacing: 8) {
-                    PlexImage(path: app.currentHomeUser?.thumb ?? app.user?.thumb, width: 60, height: 60, placeholderIcon: "person.fill")
+                    PlexImage(path: app.profileThumb, width: 60, height: 60, placeholderIcon: "person.fill")
                         .frame(width: 24, height: 24).clipShape(Circle())
                     Text(owner).font(.subheadline.weight(.semibold))
                 }

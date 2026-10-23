@@ -25,7 +25,8 @@ final class TVSession {
         didSet { UserDefaults.standard.set(selectedServerID, forKey: "selectedServerID") }
     }
 
-    var isSignedIn: Bool { token != nil }
+    /// Signed in to Plex, or to at least one Jellyfin server.
+    var isSignedIn: Bool { token != nil || servers.contains(where: \.isJellyfin) }
     @ObservationIgnored private var lastContentRefresh = Date()
 
     /// Back in the app after a while: reload server-driven pages (Continue Watching, progress,
@@ -54,7 +55,7 @@ final class TVSession {
     init() {
         // Back online after a drop (router restart, Wi-Fi blip): reconnect instead of staying failed.
         NetworkMonitor.shared.onChange { [weak self] connected in
-            guard let self, connected, self.token != nil, case .failed = self.status else { return }
+            guard let self, connected, self.isSignedIn, case .failed = self.status else { return }
             Task { await self.connect() }
         }
     }
@@ -67,7 +68,10 @@ final class TVSession {
     var photoSections: [PlexDirectory] { sections.filter { $0.type == "photo" } }
 
     func bootstrap() async {
-        guard let token else { return }
+        guard let token else {
+            if isSignedIn { await connect() }   // Jellyfin only
+            return
+        }
         let gen = generation
         if let session = try? await PlexAccount.prepareSession(token: token), gen == generation {
             user = session.user
@@ -110,6 +114,62 @@ final class TVSession {
         LiveTVStore.shared.clearSession()
         TopShelfSnapshot.clear()
         TVSpotlight.shared.reset()
+    }
+
+    /// A Jellyfin server just signed in to: saved, selected and connected.
+    func addJellyfin(_ server: PlexServer) async {
+        beginIdentityChange()
+        ServerDirectory.shared.upsert(server)
+        if let uri = server.connections.first?.uri { ServerDirectory.shared.setEndpoint(uri, for: server.id) }
+        servers = ServerDirectory.shared.servers
+        selectedServerID = server.id
+        await connect()
+    }
+
+    /// Looks up the Plex account's servers again (a server added or shared since).
+    func refreshServers() async throws {
+        guard let token else { throw PlexError.notSignedIn }
+        let gen = generation
+        let discovered = try await PlexAccount.servers(token: token)
+        guard gen == generation else { return }
+        ServerDirectory.shared.setDiscovered(discovered)
+        servers = ServerDirectory.shared.servers
+    }
+
+    /// A Plex server by its address (one that isn't on the account, or not reachable through
+    /// plex.tv). `serverToken` defaults to the signed-in account's.
+    func addPlexServer(address: String, serverToken: String?) async throws {
+        var uri = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !uri.contains("://") { uri = "http://" + uri }
+        while uri.hasSuffix("/") { uri.removeLast() }
+        if URLComponents(string: uri)?.port == nil { uri += ":32400" }
+        let tok = (serverToken?.isEmpty ?? true) ? token : serverToken
+        let identity = try await ConnectionResolver.identify(uri: uri, token: tok)
+        let id = identity.machineIdentifier ?? uri
+        var server = ServerDirectory.shared.server(id: id)
+            ?? PlexServer(name: identity.friendlyName ?? URL(string: uri)?.host ?? "Plex Server", clientIdentifier: id,
+                          accessToken: tok, owned: true, connections: [], isManual: true)
+        server.connections = [PlexConnection(uri: uri, local: AppStateLocality.looksLocal(uri), relay: false)]
+            + server.connections.filter { $0.uri != uri }
+        server.accessToken = tok ?? server.accessToken
+        ServerDirectory.shared.upsert(server)
+        ServerDirectory.shared.setEndpoint(uri, for: id)
+        servers = ServerDirectory.shared.servers
+        beginIdentityChange()
+        selectedServerID = id
+        await connect()
+    }
+
+    /// Removes a Jellyfin server (signing out of it) or a Plex server added by address.
+    func removeServer(_ server: PlexServer) async {
+        if server.isJellyfin { await JellyfinAuth.signOut(server) }
+        ServerDirectory.shared.remove(id: server.id)
+        servers = ServerDirectory.shared.servers
+        if selectedServerID == server.id {
+            beginIdentityChange()
+            selectedServerID = (servers.first { $0.owned } ?? servers.first)?.id
+            await connect()
+        }
     }
 
     func select(_ server: PlexServer) async {
@@ -178,7 +238,10 @@ final class TVSession {
         homeUsersLoaded = true
     }
 
-    var canSwitchUsers: Bool { homeUsers.count > 1 }
+    /// Plex Home profiles belong to the Plex account: not offered while a Jellyfin server is in use.
+    var canSwitchUsers: Bool { homeUsers.count > 1 && selectedServer?.isJellyfin != true }
+    /// Signed in to the selected server as this Jellyfin user (nil for a Plex server).
+    var jellyfinUser: String? { selectedServer?.isJellyfin == true ? selectedServer?.jellyfinUserName ?? "Jellyfin user" : nil }
 
     func switchUser(_ homeUser: PlexHomeUser, pin: String?) async throws {
         guard let primaryToken else { return }
@@ -211,6 +274,13 @@ final class TVSession {
         // The last known address while offline, so cached artwork still shows.
         let api = self.api ?? selectedServer.flatMap { ServerDirectory.shared.api(for: $0.id) }
         return api?.imageURL(path, width: width, height: height)
+    }
+
+    /// Your 1–5 star rating (0 clears it), saved on the server.
+    func rate(_ item: PlexMetadata, stars: Int) async {
+        guard let api else { return }
+        try? await api.rate(item.ratingKey, rating: stars == 0 ? nil : Double(stars * 2))
+        contentVersion += 1
     }
 
     func setWatched(_ item: PlexMetadata, _ watched: Bool) async {

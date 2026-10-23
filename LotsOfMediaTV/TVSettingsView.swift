@@ -5,18 +5,22 @@ struct TVSettingsView: View {
     @Environment(TVSession.self) private var session
     @Environment(ProStore.self) private var store
     @State private var showPaywall = false
+    @State private var showJellyfin = false
+    @State private var showAddPlex = false
     @State private var userToSwitch: PlexHomeUser?
     @State private var switchError: String?
     @State private var confirmSignOut = false
     @State private var builtInPlayer = BuiltInPlayer.isEnabled
     @State private var evenOutVolume = VolumeLeveling.isOn
+    @State private var passthrough = TVAudioOutput.passthrough
+    @State private var stereoOnly = TVAudioOutput.stereoOnly
     @State private var askWhoIsWatching = TVProfilePicker.isEnabled
     @State private var videoQuality = TVVideoQuality.fixed
 
     private var displayName: String {
-        session.currentHomeUser?.title ?? session.user?.title ?? session.user?.username ?? "Plex user"
+        session.jellyfinUser ?? session.currentHomeUser?.title ?? session.user?.title ?? session.user?.username ?? "Plex user"
     }
-    private var avatarPath: String? { session.currentHomeUser?.thumb ?? session.user?.thumb }
+    private var avatarPath: String? { session.jellyfinUser != nil ? nil : session.currentHomeUser?.thumb ?? session.user?.thumb }
 
     var body: some View {
         HStack(alignment: .top, spacing: 80) {
@@ -28,10 +32,12 @@ struct TVSettingsView: View {
                     servers
                     pro
                     about
-                    TVSettingsGroup {
-                        Button { confirmSignOut = true } label: {
-                            TVSettingsRow(icon: "rectangle.portrait.and.arrow.right", tint: .red, title: "Sign Out",
-                                          subtitle: session.user?.email ?? session.user?.username)
+                    if session.token != nil {
+                        TVSettingsGroup {
+                            Button { confirmSignOut = true } label: {
+                                TVSettingsRow(icon: "rectangle.portrait.and.arrow.right", tint: .red, title: "Sign Out of Plex",
+                                              subtitle: session.user?.email ?? session.user?.username)
+                            }
                         }
                     }
                 }
@@ -69,7 +75,9 @@ struct TVSettingsView: View {
                 TVAvatar(path: avatarPath, name: displayName, size: 170)
                 VStack(alignment: .leading, spacing: 6) {
                     Text(displayName).font(.system(size: 52, weight: .bold)).lineLimit(2)
-                    if let username = session.user?.username, username != displayName {
+                    if session.jellyfinUser != nil {
+                        Text("Jellyfin account").font(.callout).foregroundStyle(.secondary)
+                    } else if let username = session.user?.username, username != displayName {
                         Text(username).font(.callout).foregroundStyle(.secondary)
                     }
                 }
@@ -108,6 +116,17 @@ struct TVSettingsView: View {
         case .connecting: .yellow
         case .failed: .red
         case .idle: .gray
+        }
+    }
+
+    /// "Plex · Local", "Jellyfin · Remote"; the selected server's connection as it is now.
+    private func serverSubtitle(_ server: PlexServer, selected: Bool) -> String {
+        guard selected else { return server.kindLabel(local: server.lastConnectionIsLocal) }
+        switch session.status {
+        case .connected: return server.kindLabel(local: session.isLocalConnection)
+        case .connecting: return server.kindName + " · Connecting…"
+        case .failed: return server.kindName + " · Unavailable"
+        case .idle: return server.kindLabel(local: server.lastConnectionIsLocal)
         }
     }
 
@@ -184,6 +203,23 @@ struct TVSettingsView: View {
                     TVOnOff(on: evenOutVolume)
                 }
             }
+            Button {
+                stereoOnly.toggle()
+                TVAudioOutput.stereoOnly = stereoOnly
+            } label: {
+                TVSettingsRow(icon: "hifispeaker.2.fill", tint: .teal, title: "Stereo Only", subtitle: "Mix surround sound down to two channels") {
+                    TVOnOff(on: stereoOnly)
+                }
+            }
+            Button {
+                passthrough.toggle()
+                TVAudioOutput.passthrough = passthrough
+            } label: {
+                TVSettingsRow(icon: "hifireceiver.fill", tint: .purple, title: "Audio Passthrough",
+                              subtitle: "Built-in player: send Dolby and DTS untouched to your receiver") {
+                    TVOnOff(on: passthrough)
+                }
+            }
         }
     }
 
@@ -192,15 +228,30 @@ struct TVSettingsView: View {
             ForEach(session.servers) { server in
                 let selected = server.id == session.selectedServer?.id
                 Button { Task { await session.select(server) } } label: {
-                    TVSettingsRow(icon: "server.rack", tint: .indigo, title: server.name,
-                                  subtitle: selected ? statusText : nil) {
+                    TVSettingsRow(icon: "server.rack", tint: server.isJellyfin ? .purple : .indigo, title: server.name,
+                                  subtitle: serverSubtitle(server, selected: selected)) {
                         if selected {
                             if session.status == .connecting { ProgressView() } else { Image(systemName: "checkmark").font(.headline) }
                         }
                     }
                 }
+                .contextMenu {
+                    if server.isJellyfin {
+                        Button("Sign Out of \(server.name)", role: .destructive) { Task { await session.removeServer(server) } }
+                    } else if server.isManual {
+                        Button("Remove \(server.name)", role: .destructive) { Task { await session.removeServer(server) } }
+                    }
+                }
+            }
+            Button { showAddPlex = true } label: {
+                TVSettingsRow(icon: "plus", tint: .orange, title: "Add Plex Server")
+            }
+            Button { showJellyfin = true } label: {
+                TVSettingsRow(icon: "plus", tint: .purple, title: "Add Jellyfin Server")
             }
         }
+        .fullScreenCover(isPresented: $showJellyfin) { TVJellyfinSignInView() }
+        .fullScreenCover(isPresented: $showAddPlex) { TVAddPlexServerView() }
     }
 
     @ViewBuilder private var pro: some View {

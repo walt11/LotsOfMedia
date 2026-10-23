@@ -415,7 +415,9 @@ struct ItemDetailView: View {
                     if let sub = metaLine(item) {
                         Text(sub).font(.subheadline).foregroundStyle(.white.opacity(0.75))
                     }
-                    QualityChips(item: item)
+                    QualityChips(item: item).id(MediaVersionChoice.shared.revision)
+                    let scores = item.externalScores
+                    if !scores.isEmpty { ExternalScoresRow(scores: scores) }
                 }
                 Spacer(minLength: 0)
             }
@@ -510,10 +512,20 @@ struct ItemDetailView: View {
             SmartDownloadControl(item: item).padding(.horizontal)
         }
 
-        if item.isPlayableVideo, let media = item.primaryMedia,
+        if item.isPlayableVideo, item.media.count > 1 {
+            VersionPicker(item: item).padding(.horizontal)
+        }
+
+        if [.movie, .show, .season, .episode, .artist, .album, .track].contains(item.kind) {
+            UserRatingControl(item: item).padding(.horizontal)
+        }
+
+        if MediaVersionChoice.shared.revision >= 0, item.isPlayableVideo, let media = item.primaryMedia,
            downloads.state(serverID: app.selectedServerID ?? "", ratingKey: item.ratingKey) == nil,
            let note = PlaybackDecider.conversionReason(media: media, kind: item.kind, quality: .original)
-               .map({ "\($0). Downloads are converted to MP4 by your server automatically." })
+               .map({ app.browseAPI?.isJellyfin == true
+                   ? "\($0). It streams converted by your server; downloads need the built-in player."
+                   : "\($0). Downloads are converted to MP4 by your server automatically." })
                ?? PlaybackDecider.builtInPlayerNote(media: media, kind: item.kind) {
             Label(note, systemImage: "info.circle")
                 .font(.caption)
@@ -1107,7 +1119,8 @@ struct SmartDownloadControl: View {
                         Button {
                             smart.set(SmartDownloadRule(serverID: sid, showRatingKey: showKey, showTitle: showTitle,
                                                         showThumb: item.kind == .show ? item.thumb : item.parentThumb,
-                                                        keepCount: n, deleteWatched: rule?.deleteWatched ?? true))
+                                                        keepCount: n, deleteWatched: rule?.deleteWatched ?? true,
+                                                        includeSpecials: rule?.includeSpecials))
                         } label: {
                             let text = "Next \(n) unwatched episode\(n == 1 ? "" : "s")"
                             if rule?.keepCount == n { Label(text, systemImage: "checkmark") } else { Text(text) }
@@ -1122,6 +1135,12 @@ struct SmartDownloadControl: View {
                         } label: {
                             if r.deleteWatched { Label("Delete After Watching", systemImage: "checkmark") } else { Text("Delete After Watching") }
                         }
+                        Button {
+                            r.includeSpecials = !r.includesSpecials
+                            smart.set(r)
+                        } label: {
+                            if r.includesSpecials { Label("Include Specials", systemImage: "checkmark") } else { Text("Include Specials") }
+                        }
                     }
                 }
             } label: {
@@ -1130,7 +1149,7 @@ struct SmartDownloadControl: View {
                         .foregroundStyle(rule == nil ? Color.secondary : Cinema.accent)
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Smart Download").font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
-                        Text(rule.map { "Keeping next \($0.keepCount) unwatched\($0.deleteWatched ? " · deletes watched" : "")" }
+                        Text(rule.map { "Keeping next \($0.keepCount) unwatched\($0.includesSpecials ? " incl. specials" : "")\($0.deleteWatched ? " · deletes watched" : "")" }
                                 ?? "Automatically keep upcoming episodes downloaded")
                             .font(.caption).foregroundStyle(.secondary)
                     }
@@ -1145,12 +1164,141 @@ struct SmartDownloadControl: View {
     }
 }
 
+/// IMDb, Rotten Tomatoes and TMDB scores as small badges.
+struct ExternalScoresRow: View {
+    let scores: [ExternalScore]
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ForEach(scores, id: \.self) { score in
+                HStack(spacing: 4) {
+                    badge(score)
+                    Text(score.text).font(.caption.weight(.semibold).monospacedDigit())
+                }
+                .foregroundStyle(.white)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(score.site.rawValue) \(score.text)")
+            }
+        }
+    }
+
+    @ViewBuilder private func badge(_ score: ExternalScore) -> some View {
+        switch score.site {
+        case .imdb:
+            Text("IMDb").font(.system(size: 10, weight: .heavy)).foregroundStyle(.black)
+                .padding(.horizontal, 4).padding(.vertical, 1)
+                .background(Color(red: 0.96, green: 0.77, blue: 0.09), in: RoundedRectangle(cornerRadius: 3))
+        case .tomatoes:
+            Image(systemName: score.positive ? "circle.fill" : "burst.fill").font(.caption2)
+                .foregroundStyle(score.positive ? .red : .green)
+        case .tomatoesAudience:
+            Image(systemName: score.positive ? "popcorn.fill" : "popcorn").font(.caption2).foregroundStyle(.red)
+        case .tmdb:
+            Text("TMDB").font(.system(size: 9, weight: .heavy)).foregroundStyle(.black)
+                .padding(.horizontal, 3).padding(.vertical, 1)
+                .background(Color(red: 0.0, green: 0.82, blue: 0.69), in: RoundedRectangle(cornerRadius: 3))
+        case .tvdb:
+            Text("TVDB").font(.system(size: 9, weight: .heavy)).padding(.horizontal, 3).padding(.vertical, 1)
+                .background(.white.opacity(0.2), in: RoundedRectangle(cornerRadius: 3))
+        case .community:
+            Image(systemName: "star.fill").font(.caption2).foregroundStyle(.yellow)
+        }
+    }
+}
+
+/// Your own 1–5 star rating, saved on the server (Plex stores 0–10, two per star).
+struct UserRatingControl: View {
+    @Environment(AppState.self) private var app
+    let item: PlexMetadata
+    @State private var stars: Int?
+    @State private var saving = false
+
+    private var current: Int { stars ?? Int(((item.userRating ?? 0) / 2).rounded()) }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text("Your Rating").font(.subheadline).foregroundStyle(.white.opacity(0.7))
+            HStack(spacing: 6) {
+                ForEach(1...5, id: \.self) { n in
+                    Button { Task { await rate(n == current ? 0 : n) } } label: {
+                        Image(systemName: n <= current ? "star.fill" : "star")
+                            .font(.body)
+                            .foregroundStyle(n <= current ? Color.yellow : .white.opacity(0.5))
+                            .frame(width: 30, height: 30)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(n) star\(n == 1 ? "" : "s")")
+                    .accessibilityAddTraits(n == current ? .isSelected : [])
+                }
+            }
+            .disabled(saving || !app.isOnline)
+            if saving { ProgressView().controlSize(.small) }
+            Spacer()
+        }
+        .onChange(of: item.ratingKey) { stars = nil }
+    }
+
+    /// `n`: 1–5 stars, or 0 to clear.
+    private func rate(_ n: Int) async {
+        guard let api = app.api else { return }
+        let before = stars
+        stars = n
+        saving = true
+        defer { saving = false }
+        do {
+            try await api.rate(item.ratingKey, rating: n == 0 ? nil : Double(n * 2))
+            Haptics.tap()
+            app.libraryChanged()
+        } catch {
+            stars = before
+            app.actionError = error.localizedDescription
+        }
+    }
+}
+
+/// Chooses which of a title's versions (4K, 1080p, an extended cut…) plays and downloads.
+struct VersionPicker: View {
+    let item: PlexMetadata
+    private var choice: MediaVersionChoice { MediaVersionChoice.shared }
+
+    var body: some View {
+        let _ = choice.revision
+        let current = item.primaryMediaIndex
+        Menu {
+            ForEach(Array(item.media.enumerated()), id: \.offset) { i, media in
+                Button { choice.choose(media, of: item); Haptics.tap() } label: {
+                    if i == current { Label(media.versionLabel(), systemImage: "checkmark") } else { Text(media.versionLabel()) }
+                }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "square.stack.3d.up")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Version \(current + 1) of \(item.media.count)").font(.caption).foregroundStyle(.white.opacity(0.6))
+                    Text(item.primaryMedia?.versionLabel() ?? "").font(.subheadline.weight(.medium)).lineLimit(1)
+                }
+                Spacer()
+                Image(systemName: "chevron.up.chevron.down").font(.caption)
+            }
+            .foregroundStyle(.white)
+            .padding(10)
+            .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(0.12)))
+        }
+        .accessibilityLabel("Version: \(item.primaryMedia?.versionLabel() ?? "")")
+    }
+}
+
 /// File and stream details (the "Details" tab).
 struct DetailsPanel: View {
+    @Environment(AppState.self) private var app
     let item: PlexMetadata
+    private var jellyfin: Bool { app.browseAPI?.isJellyfin == true }
 
     private var rows: [(String, String)] {
         var out: [(String, String)] = []
+        _ = MediaVersionChoice.shared.revision   // redraw for another version
         if !item.directors.isEmpty { out.append(("Director", item.directors.prefix(2).map(\.tag).joined(separator: ", "))) }
         if !item.genres.isEmpty { out.append(("Genres", item.genres.prefix(4).map(\.tag).joined(separator: ", "))) }
         if let s = item.studio { out.append(("Studio", s)) }
@@ -1173,7 +1321,8 @@ struct DetailsPanel: View {
             if !file.isEmpty { out.append(("File", file.joined(separator: " · "))) }
             let reason = PlaybackDecider.conversionReason(media: media, kind: item.kind, quality: .original)
             let builtIn = PlaybackDecider.builtInPlayerNote(media: media, kind: item.kind) != nil
-            out.append(("Offline", reason.map { "Converts to MP4 (\($0.replacingOccurrences(of: "iPhone can't play ", with: "")))" }
+            out.append(("Offline", reason.map { jellyfin ? "Needs the built-in player (\($0.replacingOccurrences(of: "iPhone can't play ", with: "")))"
+                                              : "Converts to MP4 (\($0.replacingOccurrences(of: "iPhone can't play ", with: "")))" }
                         ?? (builtIn ? "Downloads as the original file; plays in the built-in player" : "Downloads as the original file")))
         }
         if item.kind == .show || item.kind == .season, let n = item.leafCount {

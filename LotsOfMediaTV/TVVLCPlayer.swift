@@ -28,6 +28,11 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
     @Published private(set) var skipLabel: String?
     @Published private(set) var current: PlexMetadata?
     @Published private(set) var errorMessage: String?
+    @Published var speed: Float = 1 { didSet { mediaPlayer.rate = speed } }
+    /// Sound later (positive) or earlier (negative) than the picture, to fix lip sync.
+    @Published var audioDelayMs = 0 { didSet { mediaPlayer.currentAudioPlaybackDelay = audioDelayMs * 1000 } }
+    /// Picture size relative to fitting the screen (0.5–2).
+    @Published var zoom: CGFloat = 1 { didSet { drawable?.transform = zoom == 1 ? .identity : CGAffineTransform(scaleX: zoom, y: zoom) } }
     /// Seconds left on the Up Next countdown while it's showing.
     @Published private(set) var upNextLeft: Int?
     private(set) var upNext: PlexMetadata?
@@ -75,6 +80,7 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
             }
         }
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+        TVAudioOutput.applyChannelLimit()
         Task { await load(index, resume: resumeFirst) }
     }
 
@@ -114,8 +120,13 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
         // Open on the chosen audio track rather than switching once playing: switching right
         // after a resume restarts the audio decoder mid-seek, which can leave it out of sync.
         if let n = VLCTrackChoice.audioIndex(in: item) { media.addOption(":audio-track=\(n)") }
+        if TVAudioOutput.passthrough { media.addOption(":spdif") }
         mediaPlayer.media = media
         mediaPlayer.play()
+        mediaPlayer.rate = speed
+        mediaPlayer.currentAudioPlaybackDelay = audioDelayMs * 1000
+        mediaPlayer.audio?.passthrough = TVAudioOutput.passthrough
+        if TVAudioOutput.stereoOnly { mediaPlayer.audioChannel = 1 }   // VLCAudioChannelStereo
         for s in item.primaryPart?.subtitleStreams ?? [] {
             if let key = s.key { mediaPlayer.addPlaybackSlave(api.url(key, query: PlexClient.queryItems(token: api.token)), type: .subtitle, enforce: false) }
         }
@@ -334,7 +345,7 @@ struct TVVLCPlayerView: View {
     @FocusState private var focus: Focus?
     @FocusState private var upNextFocused: Bool
 
-    enum TrackKind: Identifiable { case audio, subtitles, sleep; var id: Self { self } }
+    enum TrackKind: Identifiable { case audio, subtitles, sleep, options, speed, sync, zoom; var id: Self { self } }
 
     enum Focus: Hashable { case surface, back, play, forward, audio, subtitles, skip }
 
@@ -404,7 +415,7 @@ struct TVVLCPlayerView: View {
             }
         }
         // Track choices as a dialog on the whole screen: it stays open while video plays and controls redraw.
-        .confirmationDialog(choosing == .audio ? "Audio" : choosing == .sleep ? "Sleep Timer" : "Subtitles",
+        .confirmationDialog(dialogTitle,
                             isPresented: Binding(get: { choosing != nil }, set: { if !$0 { choosing = nil; noteActivity() } })) {
             if choosing == .sleep {
                 Button(TVSleepTimer.shared.isActive ? "Off" : "✓ Off") { TVSleepTimer.shared.cancel() }
@@ -412,6 +423,23 @@ struct TVVLCPlayerView: View {
                     Button("\(m) Minutes") { TVSleepTimer.shared.set(minutes: m) }
                 }
                 Button(TVSleepTimer.shared.atEndOfItem ? "✓ End of Episode" : "End of Episode") { TVSleepTimer.shared.setEndOfItem() }
+            } else if choosing == .options {
+                Button("Speed · \(TVSpeedLabel.text(playback.speed))") { open(.speed) }
+                Button("Audio Sync · \(AudioSyncLabel.text(playback.audioDelayMs))") { open(.sync) }
+                Button("Zoom · \(Int((playback.zoom * 100).rounded()))%") { open(.zoom) }
+            } else if choosing == .speed {
+                ForEach(PlaybackSpeeds.video, id: \.self) { s in
+                    Button(s == playback.speed ? "✓ \(TVSpeedLabel.text(s))" : TVSpeedLabel.text(s)) { playback.speed = s }
+                }
+            } else if choosing == .sync {
+                Button("Sound Earlier (−50 ms)") { playback.audioDelayMs -= 50; open(.sync) }
+                Button("Sound Later (+50 ms)") { playback.audioDelayMs += 50; open(.sync) }
+                if playback.audioDelayMs != 0 { Button("Reset") { playback.audioDelayMs = 0 } }
+            } else if choosing == .zoom {
+                ForEach([0.5, 0.75, 1, 1.25, 1.5, 2] as [CGFloat], id: \.self) { z in
+                    let label = "\(Int(z * 100))%"
+                    Button(abs(z - playback.zoom) < 0.01 ? "✓ \(label)" : label) { playback.zoom = z }
+                }
             } else if choosing == .audio {
                 ForEach(playback.audioTracks) { t in
                     Button(t.id == playback.currentAudio ? "✓ \(t.name)" : t.name) { playback.selectAudio(t.id) }
@@ -467,6 +495,8 @@ struct TVVLCPlayerView: View {
                     Button { hideTask?.cancel(); playback.syncCurrentTracks(); choosing = .subtitles } label: { Label("Subtitles", systemImage: "captions.bubble") }
                         .focused($focus, equals: .subtitles)
                 }
+                Button { hideTask?.cancel(); choosing = .options } label: { Image(systemName: "slider.horizontal.3") }
+                    .accessibilityLabel("Playback Options")
                 Button { hideTask?.cancel(); choosing = .sleep } label: {
                     Image(systemName: TVSleepTimer.shared.isActive ? "moon.zzz.fill" : "moon.zzz")
                 }
@@ -476,6 +506,27 @@ struct TVVLCPlayerView: View {
         .padding(.vertical, 50)
         .background(LinearGradient(colors: [.clear, .black.opacity(0.85)], startPoint: .top, endPoint: .bottom).ignoresSafeArea())
         .focusSection()
+    }
+
+    private var dialogTitle: String {
+        switch choosing {
+        case .audio: "Audio"
+        case .sleep: "Sleep Timer"
+        case .options: "Playback Options"
+        case .speed: "Speed"
+        case .sync: "Audio Sync · \(AudioSyncLabel.text(playback.audioDelayMs))"
+        case .zoom: "Zoom"
+        default: "Subtitles"
+        }
+    }
+
+    /// Opens another choice once the current dialog has closed.
+    private func open(_ kind: TrackKind) {
+        Task {
+            try? await Task.sleep(for: .milliseconds(350))
+            hideTask?.cancel()
+            choosing = kind
+        }
     }
 
     private func showControls() {

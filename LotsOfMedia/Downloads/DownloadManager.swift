@@ -1154,7 +1154,7 @@ final class DownloadManager {
             if wantsConversion {
                 do {
                     let sidecarSelected = part.selectedSubtitle?.isSidecarText ?? false
-                    let ids = try await ServerConversion.enqueue(api: api, ratingKey: fresh.ratingKey, quality: quality,
+                    let ids = try await ServerConversion.enqueue(api: api, ratingKey: fresh.ratingKey, mediaIndex: fresh.primaryMediaIndex, quality: quality,
                                                                  burnSubtitles: !sidecarSelected, forceTranscode: rec.forceConversion == true)
                     guard ServerDirectory.shared.authorizes(api), let i = index(of: id), records[i].state == .queued else { return }
                     records[i].source = .queue(queueID: ids.queueID, itemID: ids.itemID)
@@ -1173,7 +1173,9 @@ final class DownloadManager {
                     guard native && rec.forceConversion != true else {
                         if let i = index(of: id) {
                             records[i].state = .failed
-                            records[i].lastError = "This file's format (\((media.container ?? "unknown").uppercased())) can't play on iPhone, and your server is too old to convert it. Update Plex Media Server to 1.41.9 or later."
+                            records[i].lastError = api.isJellyfin
+                                ? "This file's format (\((media.container ?? "unknown").uppercased())) can't play on iPhone, and downloads from Jellyfin aren't converted. Turn on the built-in player in Playback Preferences to download the original."
+                                : "This file's format (\((media.container ?? "unknown").uppercased())) can't play on iPhone, and your server is too old to convert it. Update Plex Media Server to 1.41.9 or later."
                             saveNow()
                         }
                         return

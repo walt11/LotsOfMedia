@@ -19,7 +19,7 @@ enum ConnectionResolver {
             for conn in candidates {
                 group.addTask {
                     let ok = await probe(uri: conn.uri, token: server.accessToken, timeout: conn.local ? 4 : 8,
-                                         expectedID: server.isManual ? nil : server.clientIdentifier)
+                                         expectedID: server.isManual && !server.isJellyfin ? nil : server.clientIdentifier)
                     return ok ? .answered(Result(uri: conn.uri, rank: conn.rank)) : .failed
                 }
             }
@@ -54,6 +54,9 @@ enum ConnectionResolver {
     }
 
     static func probe(uri: String, token: String?, timeout: TimeInterval, expectedID: String?) async -> Bool {
+        if let expectedID, expectedID.hasPrefix(JellyfinBridge.idPrefix) {
+            return await probeJellyfin(uri: uri, timeout: timeout, expectedID: String(expectedID.dropFirst(JellyfinBridge.idPrefix.count)))
+        }
         guard let url = URL(string: uri)?.appendingPathComponent("identity") else { return false }
         var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         PlexClient.headers(token: token).forEach { req.setValue($1, forHTTPHeaderField: $0) }
@@ -63,6 +66,19 @@ enum ConnectionResolver {
             guard let expectedID else { return true }
             let container = try JSONDecoder().decode(PlexResponse.self, from: data).MediaContainer
             return container.machineIdentifier == nil || container.machineIdentifier == expectedID
+        } catch {
+            return false
+        }
+    }
+
+    /// A Jellyfin server answers its public info with its ID.
+    static func probeJellyfin(uri: String, timeout: TimeInterval, expectedID: String) async -> Bool {
+        guard let url = URL(string: uri + "/System/Info/Public") else { return false }
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: JellyfinBridge.request(url, token: nil, timeout: timeout))
+            guard (resp as? HTTPURLResponse)?.statusCode == 200 else { return false }
+            let id = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["Id"] as? String
+            return id == nil || id == expectedID
         } catch {
             return false
         }

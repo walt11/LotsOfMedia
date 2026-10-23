@@ -154,7 +154,7 @@ struct UserSwitcherButton: View {
 
     var body: some View {
         Menu {
-            if let name = app.currentHomeUser?.title ?? app.user?.title {
+            if let name = app.profileName {
                 Text([name, app.selectedServer?.name].compactMap { $0 }.joined(separator: " · "))
             }
             NavigationLink(value: Route.history) {
@@ -167,7 +167,7 @@ struct UserSwitcherButton: View {
             }
             Button { showSettings = true } label: { Label("Settings", systemImage: "gearshape") }
         } label: {
-            PlexImage(path: app.currentHomeUser?.thumb ?? app.user?.thumb, width: 80, height: 80, placeholderIcon: "person.fill")
+            PlexImage(path: app.profileThumb, width: 80, height: 80, placeholderIcon: "person.fill")
                 .frame(width: 34, height: 34)
                 .clipShape(Circle())
         }

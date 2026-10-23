@@ -276,6 +276,7 @@ struct SignInView: View {
     @State private var linkPin: PlexAccount.Pin?
     @State private var error: String?
     @State private var showManual = false
+    @State private var showJellyfin = false
     @State private var pollTask: Task<Void, Never>?
 
     var body: some View {
@@ -331,6 +332,14 @@ struct SignInView: View {
                             .font(.subheadline)
                             .padding(.top, 4)
                             .disabled(working)
+                        Button {
+                            showJellyfin = true
+                        } label: {
+                            Label("Sign in to Jellyfin", systemImage: "server.rack")
+                                .frame(maxWidth: .infinity).padding(.vertical, 6)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(working)
                         Button("Connect to a server manually") { showManual = true }
                             .font(.subheadline)
                         if !downloads.records.isEmpty {
@@ -348,6 +357,7 @@ struct SignInView: View {
                 Spacer()
             }
             .sheet(isPresented: $showManual) { ManualServerView() }
+            .sheet(isPresented: $showJellyfin) { JellyfinSignInView() }
         }
     }
 
@@ -473,6 +483,7 @@ struct ServerPickerView: View {
     @Environment(AppState.self) private var app
     @Environment(\.dismiss) private var dismiss
     @State private var showManual = false
+    @State private var showJellyfin = false
 
     var body: some View {
         List {
@@ -487,7 +498,8 @@ struct ServerPickerView: View {
                             Image(systemName: "server.rack")
                             VStack(alignment: .leading) {
                                 Text(server.name).foregroundStyle(.primary)
-                                Text(server.isManual ? "Manual" : (server.owned ? "Owned" : "Shared with you"))
+                                Text(server.kindLabel(local: server.id == app.selectedServerID && app.isOnline
+                                                      ? app.isLocalConnection : server.lastConnectionIsLocal))
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
@@ -504,7 +516,8 @@ struct ServerPickerView: View {
                 if app.servers.isEmpty { Text("No servers found for this account.") }
             }
             Section {
-                Button { showManual = true } label: { Label("Add Server Manually", systemImage: "plus") }
+                Button { showManual = true } label: { Label("Add Plex Server Manually", systemImage: "plus") }
+                Button { showJellyfin = true } label: { Label("Add Jellyfin Server", systemImage: "plus.rectangle.on.rectangle") }
                 if app.isSignedIn {
                     Button { Task { await app.refreshServers() } } label: {
                         HStack {
@@ -517,6 +530,142 @@ struct ServerPickerView: View {
         }
         .pageTitle("Servers")
         .sheet(isPresented: $showManual) { ManualServerView() }
+        .sheet(isPresented: $showJellyfin) { JellyfinSignInView() }
+    }
+}
+
+/// Signs in to a Jellyfin server with a username and password, or Quick Connect.
+struct JellyfinSignInView: View {
+    @Environment(AppState.self) private var app
+    @Environment(\.dismiss) private var dismiss
+    @State private var address = ""
+    @State private var username = ""
+    @State private var password = ""
+    @State private var server: JellyfinAuth.ServerInfo?
+    @State private var quickConnectAvailable = false
+    @State private var quickConnect: JellyfinAuth.QuickConnect?
+    @State private var pollTask: Task<Void, Never>?
+    @State private var working = false
+    @State private var error: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("http://192.168.1.10:8096", text: $address)
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .disabled(server != nil)
+                    if let server {
+                        LabeledContent(server.name, value: "Jellyfin \(server.version)")
+                    }
+                } header: {
+                    Text("Server address")
+                }
+                if server != nil {
+                    Section {
+                        TextField("Username", text: $username)
+                            .textContentType(.username)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        SecureField("Password", text: $password)
+                            .textContentType(.password)
+                        Button { Task { await signIn() } } label: {
+                            HStack { Text("Sign In"); if working { Spacer(); ProgressView() } }
+                        }
+                        .disabled(username.isEmpty || working)
+                    } header: {
+                        Text("Account")
+                    }
+                    if quickConnectAvailable {
+                        Section {
+                            if let quickConnect {
+                                Text(quickConnect.code)
+                                    .font(.system(size: 40, weight: .bold, design: .monospaced))
+                                    .kerning(6)
+                                    .frame(maxWidth: .infinity)
+                                    .textSelection(.enabled)
+                                HStack { ProgressView(); Text("Waiting for approval…").foregroundStyle(.secondary) }
+                            } else {
+                                Button("Use Quick Connect") { Task { await startQuickConnect() } }
+                            }
+                        } header: {
+                            Text("Quick Connect")
+                        } footer: {
+                            Text("Enter the code in the Jellyfin app or web page where you're signed in (your profile → Quick Connect).")
+                        }
+                    }
+                }
+                if let error {
+                    Section { Text(error).foregroundStyle(.red) }
+                }
+            }
+            .pageTitle("Jellyfin")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                if server == nil {
+                    ToolbarItem(placement: .confirmationAction) {
+                        if working { ProgressView() } else {
+                            Button("Next") { Task { await findServer() } }.disabled(address.isEmpty)
+                        }
+                    }
+                }
+            }
+            .onDisappear { pollTask?.cancel() }
+        }
+    }
+
+    private func findServer() async {
+        working = true
+        error = nil
+        defer { working = false }
+        do {
+            let found = try await JellyfinAuth.info(address: address)
+            server = found
+            quickConnectAvailable = await JellyfinAuth.quickConnectEnabled(found)
+        } catch {
+            self.error = "Couldn't reach a Jellyfin server there. \(error.localizedDescription)"
+        }
+    }
+
+    private func signIn() async {
+        guard let server else { return }
+        working = true
+        error = nil
+        defer { working = false }
+        do {
+            await finish(try await JellyfinAuth.signIn(server, username: username, password: password))
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func startQuickConnect() async {
+        guard let server else { return }
+        error = nil
+        do {
+            let qc = try await JellyfinAuth.startQuickConnect(server)
+            quickConnect = qc
+            pollTask = Task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(3))
+                    if await JellyfinAuth.checkQuickConnect(server, qc) {
+                        do { await finish(try await JellyfinAuth.signIn(server, quickConnect: qc)) } catch { self.error = error.localizedDescription }
+                        return
+                    }
+                }
+            }
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func finish(_ signedIn: PlexServer) async {
+        pollTask?.cancel()
+        await app.addJellyfinServer(signedIn)
+        dismiss()
     }
 }
 

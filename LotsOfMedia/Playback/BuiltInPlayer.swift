@@ -74,6 +74,10 @@ final class BuiltInPlaybackController: NSObject, ObservableObject, VLCMediaPlaye
     @Published private(set) var currentSubtitle: Int32 = -1
     @Published private(set) var skipLabel: String?
     @Published var speed: Float = 1 { didSet { mediaPlayer.rate = speed } }
+    /// Thumbnails for the scrubber, when the server made them.
+    @Published private(set) var previews: ScrubPreviews?
+    /// Sound later (positive) or earlier (negative) than the picture, to fix lip sync.
+    @Published var audioDelayMs = 0 { didSet { mediaPlayer.currentAudioPlaybackDelay = audioDelayMs * 1000 } }
 
     /// Called when the last item ends (the screen closes).
     var onFinished: (() -> Void)?
@@ -123,6 +127,7 @@ final class BuiltInPlaybackController: NSObject, ObservableObject, VLCMediaPlaye
         lastState = ""
         errorMessage = nil
         isBuffering = true
+        previews = nil
 
         guard let url = r.localURL ?? api.flatMap({ PlaybackDecider.directURL(api: $0, item: r.item) }) else {
             errorMessage = "Server unavailable."
@@ -147,6 +152,7 @@ final class BuiltInPlaybackController: NSObject, ObservableObject, VLCMediaPlaye
         mediaPlayer.media = media
         mediaPlayer.play()
         mediaPlayer.rate = speed
+        mediaPlayer.currentAudioPlaybackDelay = audioDelayMs * 1000
         for sub in sidecarSubtitles(r) { mediaPlayer.addPlaybackSlave(sub, type: .subtitle, enforce: false) }
         updateNowPlaying()
 
@@ -155,6 +161,8 @@ final class BuiltInPlaybackController: NSObject, ObservableObject, VLCMediaPlaye
             Task { [ratingKey = r.item.ratingKey] in
                 guard let fresh = try? await api.metadata(ratingKey), request.item.ratingKey == ratingKey else { return }
                 markers = fresh.markers
+                let loaded = await ScrubPreviews.load(api: api, item: fresh)
+                if request.item.ratingKey == ratingKey { previews = loaded }
             }
         }
     }
@@ -377,7 +385,7 @@ final class BuiltInPlayerViewController: UIViewController {
         view.addSubview(videoView)
 
         let controls = UIHostingController(rootView: BuiltInPlayerControls(playback: playback, close: { [weak self] in self?.close() },
-                                                                           setFill: { [weak self] in self?.setFill($0) })
+                                                                           setZoom: { [weak self] in self?.setZoom($0, fill: $1) })
             .preferredColorScheme(.dark))   // light-mode slider tracks vanish on black
         controls.view.backgroundColor = .clear
         addChild(controls)
@@ -397,8 +405,11 @@ final class BuiltInPlayerViewController: UIViewController {
     }
 
     private var fills = false
-    /// Zoom to fill the screen (cropping the edges) or fit the whole picture.
-    private func setFill(_ fill: Bool) {
+    private var zoom: CGFloat = 1
+    /// Fit the whole picture or fill the screen (cropping the edges), then zoom by `zoom`
+    /// (0.5–2, from the menu or pinching).
+    private func setZoom(_ zoom: CGFloat, fill: Bool) {
+        self.zoom = zoom
         fills = fill
         applyFill()
     }
@@ -411,14 +422,15 @@ final class BuiltInPlayerViewController: UIViewController {
     private func applyFill() {
         let video = playback.mediaPlayer.videoSize
         let bounds = view.bounds.size
-        guard fills, video.width > 0, video.height > 0, bounds.width > 0, bounds.height > 0 else {
-            videoView.transform = .identity
-            return
+        var scale = zoom
+        if fills, video.width > 0, video.height > 0, bounds.width > 0, bounds.height > 0 {
+            let fit = min(bounds.width / video.width, bounds.height / video.height)
+            let fill = max(bounds.width / video.width, bounds.height / video.height)
+            scale *= fill / fit
         }
-        let fit = min(bounds.width / video.width, bounds.height / video.height)
-        let fill = max(bounds.width / video.width, bounds.height / video.height)
-        let scale = fill / fit
-        UIView.animate(withDuration: 0.2) { self.videoView.transform = CGAffineTransform(scaleX: scale, y: scale) }
+        let transform = scale == 1 ? .identity : CGAffineTransform(scaleX: scale, y: scale)
+        guard videoView.transform != transform else { return }
+        UIView.animate(withDuration: 0.15) { self.videoView.transform = transform }
     }
 
     private func close() {
@@ -448,20 +460,36 @@ final class BuiltInPlayerViewController: UIViewController {
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .allButUpsideDown }
 }
 
-/// Play/pause, ±10 s, scrubber, audio and subtitle tracks, speed, fill and Skip Intro.
+/// Play/pause, ±10 s, scrubber, audio and subtitle tracks, speed, audio sync, zoom and Skip Intro.
 struct BuiltInPlayerControls: View {
     @ObservedObject var playback: BuiltInPlaybackController
     let close: () -> Void
-    let setFill: (Bool) -> Void
+    let setZoom: (_ zoom: CGFloat, _ fill: Bool) -> Void
     @State private var visible = true
     @State private var scrubMs: Double?
     @State private var fill = false
+    @State private var zoom: CGFloat = 1
+    /// Zoom when the pinch began.
+    @State private var pinchStart: CGFloat?
+    static let zoomSteps: [CGFloat] = [0.5, 0.75, 1, 1.25, 1.5, 2]
     @State private var hideTask: Task<Void, Never>?
 
     var body: some View {
         ZStack {
             Color.clear.contentShape(Rectangle())
                 .onTapGesture { visible ? hide() : show() }
+                .gesture(MagnifyGesture()
+                    .onChanged { g in
+                        let start = pinchStart ?? zoom
+                        pinchStart = start
+                        zoom = min(max(start * g.magnification, 0.5), 2)
+                        setZoom(zoom, fill)
+                    }
+                    .onEnded { _ in
+                        pinchStart = nil
+                        // Snap close to 100% back to it.
+                        if abs(zoom - 1) < 0.06 { zoom = 1; setZoom(zoom, fill) }
+                    })
             if playback.isBuffering && playback.errorMessage == nil {
                 ProgressView().controlSize(.large).tint(.white)
             }
@@ -537,12 +565,24 @@ struct BuiltInPlayerControls: View {
                 .accessibilityLabel("Subtitles")
             }
             Menu {
-                ForEach(VideoPlaybackController.speeds, id: \.self) { s in
-                    Button { playback.speed = s } label: { checkLabel(s == 1 ? "Normal" : String(format: "%gx", s), on: s == playback.speed) }
-                }
-            } label: { Image(systemName: "gauge.with.dots.needle.67percent").font(.title3) }
-            .accessibilityLabel("Speed")
-            Button { fill.toggle(); setFill(fill) } label: {
+                Menu {
+                    ForEach(VideoPlaybackController.speeds, id: \.self) { s in
+                        Button { playback.speed = s } label: { checkLabel(SpeedLabel.text(s), on: s == playback.speed) }
+                    }
+                } label: { Label("Speed · \(SpeedLabel.text(playback.speed))", systemImage: "gauge.with.dots.needle.67percent") }
+                Menu {
+                    Button { playback.audioDelayMs -= 50 } label: { Label("Sound Earlier (−50 ms)", systemImage: "minus") }
+                    Button { playback.audioDelayMs += 50 } label: { Label("Sound Later (+50 ms)", systemImage: "plus") }
+                    if playback.audioDelayMs != 0 { Button("Reset") { playback.audioDelayMs = 0 } }
+                } label: { Label("Audio Sync · \(AudioSyncLabel.text(playback.audioDelayMs))", systemImage: "waveform.badge.plus") }
+                Menu {
+                    ForEach(Self.zoomSteps, id: \.self) { z in
+                        Button { zoom = z; setZoom(z, fill) } label: { checkLabel("\(Int(z * 100))%", on: abs(z - zoom) < 0.01) }
+                    }
+                } label: { Label("Zoom · \(Int((zoom * 100).rounded()))%", systemImage: "plus.magnifyingglass") }
+            } label: { Image(systemName: "slider.horizontal.3").font(.title3) }
+            .accessibilityLabel("Playback Options")
+            Button { fill.toggle(); setZoom(zoom, fill) } label: {
                 Image(systemName: fill ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right").font(.title3)
             }
             .accessibilityLabel(fill ? "Fit to Screen" : "Fill Screen")
@@ -572,6 +612,11 @@ struct BuiltInPlayerControls: View {
             GeometryReader { geo in
                 let fraction = min(max(shown / duration, 0), 1)
                 ZStack(alignment: .leading) {
+                    if let scrubMs, let previews = playback.previews {
+                        ScrubPreviewThumbnail(previews: previews, ms: Int(scrubMs))
+                            .offset(x: min(max(geo.size.width * fraction - 90, 0), max(geo.size.width - 180, 0)), y: -80)
+                            .allowsHitTesting(false)
+                    }
                     Capsule().fill(.white.opacity(0.3)).frame(height: scrubMs == nil ? 4 : 8)
                     Capsule().fill(Cinema.accent).frame(width: geo.size.width * fraction, height: scrubMs == nil ? 4 : 8)
                     Circle().fill(.white).frame(width: 16, height: 16)
@@ -630,6 +675,30 @@ struct BuiltInPlayerControls: View {
             try? await Task.sleep(for: .seconds(4))
             guard !Task.isCancelled, playback.isPlaying else { return }
             visible = false
+        }
+    }
+}
+
+/// The frame at the scrub position, above the scrubber.
+struct ScrubPreviewThumbnail: View {
+    let previews: ScrubPreviews
+    let ms: Int
+    @State private var image: UIImage?
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Group {
+                if let image { Image(uiImage: image).resizable().aspectRatio(contentMode: .fill) } else { Color.black }
+            }
+            .frame(width: 180, height: 101)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.white.opacity(0.6), lineWidth: 1))
+            Text(Fmt.clock(seconds: Double(ms) / 1000)).font(.caption.monospacedDigit().weight(.semibold))
+        }
+        .shadow(radius: 6)
+        // Every 2 seconds of scrub position at most, so dragging doesn't decode every frame.
+        .task(id: ms / 2000) {
+            if let found = await previews.image(atMs: ms) { image = found }
         }
     }
 }

@@ -1,6 +1,6 @@
 # LotsOfMedia
 
-A native SwiftUI Plex client for iPhone, iPad (iOS 17+) and Apple TV (tvOS 17+). The only third-party code is VLCKit, for the optional built-in player (see below).
+A native SwiftUI Plex and Jellyfin client for iPhone, iPad (iOS 17+) and Apple TV (tvOS 17+). The only third-party code is VLCKit, for the optional built-in player (see below).
 
 ## Features
 
@@ -24,7 +24,7 @@ A native SwiftUI Plex client for iPhone, iPad (iOS 17+) and Apple TV (tvOS 17+).
 - **Sound Check**: songs play at a consistent volume using the server's loudness analysis (Playback Preferences).
 - **Skip Intro / Skip Credits**: uses Plex's intro and credits markers. At the final credits a "Next Episode in 10" countdown rolls into the next episode, with a "Watch Credits" option.
 - **Subtitles**: text subtitles (SRT/ASS/VTT) are drawn by the app, so they don't force a transcode. In the player you can switch tracks, adjust timing and size, and search online providers through your server. Subtitles are saved with downloads for offline use.
-- **Smart Downloads**: per show, keep the next 1/3/5/10 unwatched episodes downloaded and delete episodes after watching. Refreshes on connect, after playback, on app open and in the background.
+- **Smart Downloads**: per show, keep the next 1/3/5/10 unwatched episodes downloaded and delete episodes after watching. Specials (season 0) are skipped unless Include Specials is on. Refreshes on connect, after playback, on app open and in the background.
 - **Download rules**: Wi-Fi only, charging only (downloads resume automatically when plugged in, even with the app closed), and a storage limit that can remove watched downloads to make room.
 - **Live TV & DVR** (Plex Pass with a tuner such as an HDHomeRun; the tab appears only when the server has a DVR):
   - **On Now**: every channel's current program with artwork, progress and what's next. Tap to watch.
@@ -42,7 +42,11 @@ A native SwiftUI Plex client for iPhone, iPad (iOS 17+) and Apple TV (tvOS 17+).
 - **Undo**: removing playlist entries shows "Removed — Undo" for five seconds before anything changes on the server.
 - **Mixes**: Favorites to Revisit, Recently Added, Downloaded Songs, Most Played and Rediscover.
 - **Watch Later**: its own list, separate from Favorites and Continue Watching; watched items are removed automatically (can be turned off).
-- **Video controls**: playback speed (0.5–2×), chapters when the file has them, and remembered audio/subtitle languages per profile.
+- **Video controls**: playback speed (0.25–4×), chapters when the file has them, and remembered audio/subtitle languages per profile. The built-in player adds audio sync (±50 ms steps), zoom from 50% to 200% (menu or pinch) and preview thumbnails while scrubbing.
+- **Versions**: a title with more than one file (4K and 1080p, an extended cut) has a Version menu on its page; the choice is used for playback and downloads, and remembered.
+- **Ratings**: your own 1–5 star rating on each title's page, and IMDb, Rotten Tomatoes and TMDB scores where the server has them.
+- **Scrub previews and chapter pictures**: Plex's preview thumbnails and Jellyfin's trickplay images show above the built-in player's scrubber; on Apple TV, chapters appear in the player's info panel with a picture each.
+- **Settings backup**: Settings → Backup shares a file with preferences, Favorites, Watch Later and Home layouts, and restores it on another device. Sign-ins and servers aren't included.
 - **Free Up Space**: suggests watched movies, finished shows, the largest downloads and rarely played music, and previews the space saved before deleting.
 - **Playback Info**: Direct Play vs conversion and why, which player is in use, suggestions to improve playback, source and stream quality, connection route, server conversion details and recent errors, with a shareable report that removes account tokens.
 - **Play on another device**: send what's playing to a Plex player on your network (from Now Playing or the video player).
@@ -54,6 +58,14 @@ A native SwiftUI Plex client for iPhone, iPad (iOS 17+) and Apple TV (tvOS 17+).
   - Download a movie, an episode, a whole season, a whole show (all or unwatched only), an album, or an artist.
   - Downloads play from disk. Downloaded shows and music can be browsed with no connection.
   - Progress made while offline is synced to the server when you're back online.
+
+## Jellyfin
+
+Jellyfin servers sit alongside Plex ones: sign in from the first screen or Servers → Add Jellyfin Server with a username and password, or with Quick Connect (a code approved in another Jellyfin app, handy on Apple TV). The app keeps working with Plex-shaped requests; [`JellyfinBridge`](LotsOfMedia/Plex/JellyfinBridge.swift) answers them from Jellyfin's API (10.9 and later preferred, with the older per-user routes as a fallback) and returns the JSON a Plex server would. Stream and artwork keys in those answers are Jellyfin paths, signed with `ApiKey` (the spelling every Jellyfin version accepts; 12 refuses `api_key`).
+
+What works the same: browsing, Home rows (Continue Watching, Next Up, Recently Added), search, collections, playlists (create, add, remove, reorder), detail pages with cast and similar titles, extras, direct play and HLS conversion (with the chosen version, audio track and burned-in subtitles), text subtitles drawn by the app, online subtitle search, intro and credits skipping (Jellyfin 10.10 media segments), chapters, trickplay scrub previews, progress and watched state, likes as ratings, lyrics, Sound Check (normalization gain), downloads of the original file and the offline cache.
+
+Not on Jellyfin: Live TV and DVR, Plex Home profiles and the Watchlist (these are Plex account features), playing on other devices, and converted downloads (a file Apple's player can't play downloads as the original for the built-in player).
 
 ## Download engine
 

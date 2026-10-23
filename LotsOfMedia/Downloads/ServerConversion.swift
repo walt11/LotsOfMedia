@@ -45,7 +45,7 @@ enum ServerConversion {
 
     /// `burnSubtitles`: false when the selected subtitle is sidecar text that's saved
     /// separately (so it isn't also burned into the converted video).
-    static func enqueue(api: PlexServerAPI, ratingKey: String, quality: DownloadQuality,
+    static func enqueue(api: PlexServerAPI, ratingKey: String, mediaIndex: Int = 0, quality: DownloadQuality,
                         burnSubtitles: Bool = true, forceTranscode: Bool = false) async throws -> (queueID: Int, itemID: Int) {
         let queue = try await api.container("/downloadQueue", method: "POST")
         guard let queueID = queue.downloadQueues.first?.id else { throw PlexError.invalidResponse }
@@ -67,7 +67,7 @@ enum ServerConversion {
             URLQueryItem(name: "directStream", value: forceTranscode ? "0" : "1"),
             URLQueryItem(name: "directStreamAudio", value: forceTranscode ? "0" : "1"),
             URLQueryItem(name: "videoQuality", value: "100"),
-            URLQueryItem(name: "mediaIndex", value: "0"),
+            URLQueryItem(name: "mediaIndex", value: "\(mediaIndex)"),
             URLQueryItem(name: "partIndex", value: "0"),
             URLQueryItem(name: "subtitles", value: burnSubtitles ? "auto" : "none"),
             URLQueryItem(name: "location", value: "lan"),

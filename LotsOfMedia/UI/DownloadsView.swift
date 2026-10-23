@@ -1140,8 +1140,11 @@ struct SettingsView: View {
         Form {
             ProSettingsSection()
             Section("Account") {
+                if let jellyfin = app.jellyfinUser {
+                    LabeledContent("Jellyfin", value: jellyfin)
+                }
                 if let user = app.user {
-                    LabeledContent("Signed in as", value: user.title ?? user.username ?? user.email ?? "Plex user")
+                    LabeledContent(app.jellyfinUser == nil ? "Signed in as" : "Plex account", value: user.title ?? user.username ?? user.email ?? "Plex user")
                     if app.canSwitchUsers {
                         Button { showUsers = true } label: { Label("Switch Home User", systemImage: "person.2.fill") }
                         Toggle(isOn: $askWhoIsWatching) {
@@ -1151,14 +1154,14 @@ struct SettingsView: View {
                     }
                 } else if app.isSignedIn {
                     LabeledContent("Signed in", value: "Plex account")
-                } else {
+                } else if app.jellyfinUser == nil {
                     Text("Not signed in (manual server)").foregroundStyle(.secondary)
                 }
                 Button { confirmSwitchAccount = true } label: {
                     Label(app.isSignedIn ? "Sign In with Another Plex Account" : "Sign In with Plex", systemImage: "person.crop.circle.badge.plus")
                 }
                 if app.isSignedIn {
-                    Button("Sign Out", role: .destructive) { confirmSignOut = true }
+                    Button("Sign Out of Plex", role: .destructive) { confirmSignOut = true }
                 }
             }
             Section("Server") {
@@ -1234,6 +1237,7 @@ struct SettingsView: View {
             } header: {
                 Text("Downloads")
             }
+            SettingsTransferSection()
             Section {
                 NavigationLink("Acknowledgements") { AcknowledgementsView() }
             }
