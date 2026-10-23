@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.name }}
+    runs-on: macos-15
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: iOS
+            scheme: LotsOfMedia
+            platform: iOS Simulator
+            device: iPhone
+          - name: tvOS
+            scheme: LotsOfMediaTV
+            platform: tvOS Simulator
+            device: Apple TV
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Cache VLCKit
+        uses: actions/cache@v4
+        with:
+          path: Vendor
+          key: vlckit-${{ hashFiles('scripts/fetch-vlckit.sh') }}
+
+      - name: Fetch VLCKit
+        run: scripts/fetch-vlckit.sh
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Pick a simulator
+        id: sim
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          DEVICE: ${{ matrix.device }}
+        run: |
+          # Newest runtime's first matching device, so the job doesn't break when Xcode renames simulators.
+          ID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, os, sys
+          prefix = {"iOS Simulator": "com.apple.CoreSimulator.SimRuntime.iOS", "tvOS Simulator": "com.apple.CoreSimulator.SimRuntime.tvOS"}[os.environ["PLATFORM"]]
+          devices = json.load(sys.stdin)["devices"]
+          for runtime in sorted((r for r in devices if r.startswith(prefix)), key=lambda r: [int(p) for p in r.rsplit(".", 1)[-1].split("-")[1:]], reverse=True):
+              for d in devices[runtime]:
+                  if d["name"].startswith(os.environ["DEVICE"]):
+                      print(d["udid"]); sys.exit()
+          sys.exit("no simulator found")
+          ')
+          echo "Using simulator $ID"
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+
+      - name: Build and test
+        # Ad-hoc signing needs no certificate but still embeds the entitlements, so the
+        # keychain access groups the Top Shelf / widget snapshot tests rely on still work.
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project LotsOfMedia.xcodeproj \
+            -scheme "${{ matrix.scheme }}" \
+            -destination "id=${{ steps.sim.outputs.id }}" \
+            -derivedDataPath DerivedData \
+            -resultBundlePath "TestResults-${{ matrix.name }}.xcresult" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY=- \
+            2>&1 | tee xcodebuild.log | xcbeautify --renderer github-actions
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TestResults-${{ matrix.name }}
+          path: |
+            TestResults-${{ matrix.name }}.xcresult
+            xcodebuild.log

@@ -1,0 +1,50 @@
+{
+  "images": [
+    {
+      "filename": "icon.png",
+      "idiom": "universal",
+      "platform": "ios",
+      "size": "1024x1024"
+    },
+    {
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ],
+      "filename": "icon-dark.png",
+      "idiom": "universal",
+      "platform": "ios",
+      "size": "1024x1024"
+    },
+    {
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "tinted"
+        }
+      ],
+      "filename": "icon-tinted.png",
+      "idiom": "universal",
+      "platform": "ios",
+      "size": "1024x1024"
+    },
+    {
+      "filename": "carplay-120.png",
+      "idiom": "car",
+      "scale": "2x",
+      "size": "60x60"
+    },
+    {
+      "filename": "carplay-180.png",
+      "idiom": "car",
+      "scale": "3x",
+      "size": "60x60"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  }
+}

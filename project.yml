@@ -1,0 +1,207 @@
+name: LotsOfMedia
+options:
+  bundleIdPrefix: net.jwalter
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    # Targeted: concurrency problems in async code show as warnings, the step before Swift 6.
+    SWIFT_STRICT_CONCURRENCY: targeted
+    # User-facing text is collected into Localizable.xcstrings on each build, ready to translate.
+    SWIFT_EMIT_LOC_STRINGS: YES
+    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: 76BJCJ4Q7X
+targets:
+  LotsOfMedia:
+    type: application
+    platform: iOS
+    sources:
+      - LotsOfMedia
+      - Shared
+      - TVShared/TopShelfSnapshot.swift
+    dependencies:
+      - target: LotsOfMediaWidgets
+      # VLCKit (LGPL-2.1), embedded as its own dynamic framework so it can be replaced.
+      # Fetched by scripts/fetch-vlckit.sh (too large for git).
+      - framework: Vendor/MobileVLCKit.xcframework
+        embed: true
+    postBuildScripts:
+      - name: Thin VLCKit to the built architectures
+        basedOnDependencyAnalysis: false
+        script: |
+          # The prebuilt device framework also carries 32-bit slices iOS 17 never loads.
+          BIN="${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/MobileVLCKit.framework/MobileVLCKit"
+          [ -f "$BIN" ] || exit 0
+          for arch in $(lipo -archs "$BIN"); do
+            case " ${ARCHS} " in *" $arch "*) ;; *) lipo -remove "$arch" -output "$BIN" "$BIN" ;; esac
+          done
+          if [ -n "${EXPANDED_CODE_SIGN_IDENTITY:-}" ] && [ "${CODE_SIGNING_ALLOWED:-YES}" = "YES" ]; then
+            codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" --preserve-metadata=identifier,entitlements "${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/MobileVLCKit.framework"
+          fi
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.jwalter.LotsOfMedia
+        TARGETED_DEVICE_FAMILY: "1,2"
+        # The iPad app on Apple silicon Macs and Apple Vision Pro (turned on per platform in App Store Connect).
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: YES
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: YES
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: LotsOfMedia/Resources/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # Every Icon-*/AppIcon-* set is an alternate icon (Settings → App Icon).
+        ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: YES
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CODE_SIGN_STYLE: Automatic
+        # Includes Apple-granted CarPlay audio, so the app appears in CarPlay.
+        CODE_SIGN_ENTITLEMENTS: LotsOfMedia/Resources/LotsOfMedia.entitlements
+  LotsOfMediaWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - LotsOfMediaWidgets
+      - Shared
+      - TVShared/TopShelfSnapshot.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.jwalter.LotsOfMedia.Widgets
+        CODE_SIGN_ENTITLEMENTS: LotsOfMediaWidgets/LotsOfMediaWidgets.entitlements
+        INFOPLIST_FILE: LotsOfMediaWidgets/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SKIP_INSTALL: YES
+        CODE_SIGN_STYLE: Automatic
+  LotsOfMediaTV:
+    # Apple TV app. Same bundle ID as the iPhone app for Universal Purchase (one listing, Pro on both).
+    type: application
+    platform: tvOS
+    deploymentTarget: "17.0"
+    sources:
+      - LotsOfMediaTV
+      - TVShared
+      - LotsOfMedia/Plex
+      - LotsOfMedia/LiveTV/LiveTVModels.swift
+      - LotsOfMedia/LiveTV/LiveTVStore.swift
+      - LotsOfMedia/Downloads/NetworkMonitor.swift
+      - LotsOfMedia/Resources/Licenses
+      - LotsOfMedia/Support/Formatting.swift
+      - LotsOfMedia/Support/ImageLoader.swift
+      - LotsOfMedia/Support/Keychain.swift
+      - LotsOfMedia/Support/LossyDecoding.swift
+      - LotsOfMedia/Support/LibraryCache.swift
+      - LotsOfMedia/Support/ProStore.swift
+      - LotsOfMedia/Support/Haptics.swift
+      - LotsOfMedia/Playback/PlaybackDecider.swift
+      - Shared/AppTheme.swift
+    dependencies:
+      - target: LotsOfMediaTopShelf
+      # TVVLCKit (LGPL-2.1), embedded as its own dynamic framework so it can be replaced.
+      # Fetched by scripts/fetch-vlckit.sh (too large for git).
+      - framework: Vendor/TVVLCKit.xcframework
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.jwalter.LotsOfMedia
+        CODE_SIGN_ENTITLEMENTS: LotsOfMediaTV/LotsOfMediaTV.entitlements
+        # Distinct from the iPhone app's LotsOfMedia.app; the TV still shows "LotsOfMedia" (CFBundleDisplayName).
+        PRODUCT_NAME: LotsOfMediaTV
+        PRODUCT_MODULE_NAME: LotsOfMediaTV
+        TARGETED_DEVICE_FAMILY: "3"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: LotsOfMediaTV/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CODE_SIGN_STYLE: Automatic
+  LotsOfMediaTopShelf:
+    # Apple TV Top Shelf: Continue Watching, read from the app's App Group snapshot.
+    type: app-extension
+    platform: tvOS
+    deploymentTarget: "17.0"
+    sources:
+      - LotsOfMediaTopShelf
+      - TVShared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.jwalter.LotsOfMedia.TopShelf
+        INFOPLIST_FILE: LotsOfMediaTopShelf/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "3"
+        CODE_SIGN_ENTITLEMENTS: LotsOfMediaTopShelf/LotsOfMediaTopShelf.entitlements
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: YES
+  LotsOfMediaTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - LotsOfMediaTests
+    dependencies:
+      - target: LotsOfMedia
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.jwalter.LotsOfMediaTests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/LotsOfMedia.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/LotsOfMedia"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+  LotsOfMediaTVTests:
+    # Apple TV unit tests: Up Next timing, display matching, queue restore, Top Shelf links.
+    type: bundle.unit-test
+    platform: tvOS
+    deploymentTarget: "17.0"
+    sources:
+      - LotsOfMediaTVTests
+    dependencies:
+      - target: LotsOfMediaTV
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.jwalter.LotsOfMediaTVTests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/LotsOfMediaTV.app/LotsOfMediaTV"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+  LotsOfMediaTVUITests:
+    # Remote-driven checks of focus on Apple TV pages (run on the tvOS simulator).
+    type: bundle.ui-testing
+    platform: tvOS
+    deploymentTarget: "17.0"
+    sources:
+      - LotsOfMediaTVUITests
+    dependencies:
+      - target: LotsOfMediaTV
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.jwalter.LotsOfMediaTVUITests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: LotsOfMediaTV
+schemes:
+  LotsOfMedia:
+    build:
+      targets:
+        LotsOfMedia: all
+        LotsOfMediaTests: [test]
+    run:
+      # Local purchases in the simulator; TestFlight and the App Store use the real product.
+      storeKitConfiguration: StoreKit/LotsOfMedia.storekit
+    test:
+      targets:
+        - LotsOfMediaTests
+  LotsOfMediaTV:
+    build:
+      targets:
+        LotsOfMediaTV: all
+        LotsOfMediaTVTests: [test]
+    test:
+      targets:
+        - LotsOfMediaTVTests
+  # Remote-driven focus checks (slower; run on their own).
+  LotsOfMediaTVUITests:
+    build:
+      targets:
+        LotsOfMediaTV: all
+        LotsOfMediaTVUITests: [test]
+    test:
+      targets:
+        - LotsOfMediaTVUITests
+    run:
+      storeKitConfiguration: StoreKit/LotsOfMedia.storekit

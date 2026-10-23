@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1360" height="1440" viewBox="0 0 680 720">
+<rect width="680" height="720" fill="#111418"/>
+<style>.l{font-family:-apple-system,Helvetica,Arial,sans-serif;font-size:13px;fill:#D8DCE2;text-anchor:middle}</style>
+<g transform="translate(45,30)">
+<rect width="150" height="150" rx="34" fill="#1C9FD0"/>
+<line x1="62" y1="44" x2="50" y2="26" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round"/>
+<line x1="88" y1="44" x2="100" y2="26" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round"/>
+<rect x="26" y="44" width="98" height="74" rx="16" fill="#FFFFFF"/>
+<rect x="36" y="53" width="78" height="56" rx="9" fill="#13233A"/>
+<rect x="40" y="118" width="14" height="8" rx="3" fill="#FFFFFF"/>
+<rect x="96" y="118" width="14" height="8" rx="3" fill="#FFFFFF"/>
+<ellipse cx="68" cy="95" rx="9" ry="7" fill="#36C9EF"/>
+<rect x="74" y="64" width="5" height="32" fill="#36C9EF"/>
+<path d="M79 64 Q95 70 90 84 Q88 74 79 72 Z" fill="#36C9EF"/>
+</g>
+<text class="l" x="120" y="204">1 · TV with a note</text>
+<g transform="translate(265,30)">
+<rect width="150" height="150" rx="34" fill="#0B1220"/>
+<path d="M46 40 L46 112 L104 76 Z" fill="#36C9EF" stroke="#36C9EF" stroke-width="8" stroke-linejoin="round"/>
+<rect x="100" y="30" width="8" height="48" rx="3" fill="#36C9EF"/>
+<path d="M108 30 Q128 38 122 58 Q118 46 108 44 Z" fill="#36C9EF"/>
+</g>
+<text class="l" x="340" y="204">2 · Play-and-note mark</text>
+<g transform="translate(485,30)">
+<rect width="150" height="150" rx="34" fill="#12202E"/>
+<g transform="rotate(-14 75 80)"><rect x="38" y="40" width="74" height="74" rx="10" fill="#F2A33A"/><circle cx="75" cy="77" r="22" fill="#7A4A10"/><circle cx="75" cy="77" r="6" fill="#F2A33A"/></g>
+<g transform="rotate(10 75 80)"><rect x="38" y="40" width="74" height="74" rx="10" fill="#8B5CF6"/><rect x="44" y="46" width="8" height="8" rx="2" fill="#2E1A66"/><rect x="44" y="62" width="8" height="8" rx="2" fill="#2E1A66"/><rect x="44" y="78" width="8" height="8" rx="2" fill="#2E1A66"/><rect x="44" y="94" width="8" height="8" rx="2" fill="#2E1A66"/></g>
+<rect x="44" y="50" width="70" height="70" rx="10" fill="#36C9EF"/>
+<path d="M70 70 L70 100 L94 85 Z" fill="#071018"/>
+</g>
+<text class="l" x="560" y="204">3 · Stacked media</text>
+<g transform="translate(45,260)">
+<rect width="150" height="150" rx="34" fill="#0E1621"/>
+<rect x="22" y="34" width="50" height="82" rx="10" fill="#1A2533"/>
+<g fill="#3E5068"><circle cx="34" cy="46" r="3"/><circle cx="47" cy="46" r="3"/><circle cx="60" cy="46" r="3"/><circle cx="34" cy="59" r="3"/><circle cx="47" cy="59" r="3"/><circle cx="60" cy="59" r="3"/><circle cx="34" cy="72" r="3"/><circle cx="47" cy="72" r="3"/><circle cx="60" cy="72" r="3"/><circle cx="34" cy="85" r="3"/><circle cx="47" cy="85" r="3"/><circle cx="60" cy="85" r="3"/><circle cx="34" cy="98" r="3"/><circle cx="47" cy="98" r="3"/><circle cx="60" cy="98" r="3"/></g>
+<rect x="78" y="34" width="50" height="82" rx="10" fill="#36C9EF"/>
+<path d="M96 62 L96 88 L116 75 Z" fill="#071018"/>
+</g>
+<text class="l" x="120" y="434">4 · Speaker and screen</text>
+<g transform="translate(265,260)">
+<rect width="150" height="150" rx="34" fill="#F2A33A"/>
+<rect x="20" y="38" width="110" height="76" rx="10" fill="#1D2430"/>
+<rect x="30" y="46" width="90" height="30" rx="5" fill="#F7F3EA"/>
+<rect x="60" y="50" width="30" height="22" rx="4" fill="#36C9EF"/>
+<path d="M71 55 L71 67 L80 61 Z" fill="#071018"/>
+<circle cx="52" cy="92" r="10" fill="#F7F3EA"/><circle cx="98" cy="92" r="10" fill="#F7F3EA"/>
+<circle cx="52" cy="92" r="4" fill="#1D2430"/><circle cx="98" cy="92" r="4" fill="#1D2430"/>
+<path d="M44 114 L50 104 L100 104 L106 114 Z" fill="#2E3644"/>
+</g>
+<text class="l" x="340" y="434">5 · Cassette (Ember)</text>
+<g transform="translate(485,260)">
+<rect width="150" height="150" rx="34" fill="#5F6675"/>
+<rect x="22" y="40" width="106" height="72" rx="7" fill="#121418"/>
+<rect x="32" y="48" width="86" height="26" rx="4" fill="#FF8833"/>
+<path d="M68 53 L68 69 L80 61 Z" fill="#121418"/>
+<rect x="44" y="84" width="62" height="18" rx="4" fill="#2A2E36"/>
+<circle cx="58" cy="93" r="5" fill="#121418"/><circle cx="92" cy="93" r="5" fill="#121418"/>
+</g>
+<text class="l" x="560" y="434">6 · VHS (Graphite)</text>
+<g transform="translate(45,490)">
+<rect width="150" height="150" rx="34" fill="#12202E"/>
+<circle cx="75" cy="75" r="54" fill="#0B0C10"/>
+<g fill="none" stroke="#262B33" stroke-width="1.5"><circle cx="75" cy="75" r="47"/><circle cx="75" cy="75" r="41"/><circle cx="75" cy="75" r="35"/><circle cx="75" cy="75" r="29"/></g>
+<circle cx="75" cy="75" r="21" fill="#36C9EF"/>
+<path d="M69 64 L69 86 L87 75 Z" fill="#071018"/>
+</g>
+<text class="l" x="120" y="664">7 · Vinyl record</text>
+<g transform="translate(265,490)">
+<rect width="150" height="150" rx="34" fill="#36C9EF"/>
+<text x="75" y="94" text-anchor="middle" style="font-family:-apple-system,Helvetica,Arial,sans-serif;font-size:54px;font-weight:900;fill:#071018;letter-spacing:-2px">LoM</text>
+</g>
+<text class="l" x="340" y="664">8 · LoM lettermark</text>
+<g transform="translate(485,490)">
+<rect width="150" height="150" rx="34" fill="#05070B"/>
+<circle cx="75" cy="75" r="50" fill="#36C9EF" opacity="0.10"/>
+<circle cx="75" cy="75" r="40" fill="#36C9EF" opacity="0.18"/>
+<circle cx="75" cy="75" r="30" fill="#36C9EF"/>
+<path d="M67 61 L67 89 L91 75 Z" fill="#05070B"/>
+</g>
+<text class="l" x="560" y="664">9 · Glowing play dot</text>
+</svg>

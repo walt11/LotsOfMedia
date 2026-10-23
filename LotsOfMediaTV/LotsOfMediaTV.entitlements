@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The app's own group stays first (the default for its sign-in); the shared one carries the Top Shelf snapshot. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)net.jwalter.LotsOfMedia</string>
+		<string>$(AppIdentifierPrefix)net.jwalter.LotsOfMedia.shared</string>
+	</array>
+	<!-- Apple TV user profiles: each person on the TV has their own sign-in and settings. -->
+	<key>com.apple.developer.user-management</key>
+	<array>
+		<string>runs-as-current-user</string>
+	</array>
+</dict>
+</plist>
