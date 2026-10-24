@@ -2,6 +2,8 @@
 
 A native SwiftUI Plex and Jellyfin client for iPhone, iPad (iOS 17+) and Apple TV (tvOS 17+). The only third-party code is VLCKit, for the optional built-in player (see below).
 
+The Roku version, built to look and work like the Apple TV app, lives in its own repository: [LotsOfMedia-Roku](https://github.com/walt11/LotsOfMedia-Roku).
+
 ## Features
 
 - **Sign in**: Plex account through the browser (`app.plex.tv/auth`) or a 4-character code at plex.tv/link. You can also add a server manually by URL, with an optional token.
