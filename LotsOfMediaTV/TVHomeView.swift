@@ -28,6 +28,7 @@ struct TVHomeView: View {
                             TVRow(title: "Continue Watching") {
                                 ForEach(continueWatching) { item in
                                     TVWideCard(item: item) { playing = TVPlayRequest(item: item, resume: true) }
+                                        .playsOnPlayPause(item)
                                         .contextMenu { continueMenu(item) }
                                 }
                             }
@@ -35,7 +36,7 @@ struct TVHomeView: View {
                         ForEach(hubs) { hub in
                             TVRow(title: hub.title) {
                                 ForEach(hub.metadata) { item in
-                                    NavigationLink(value: item) { TVPosterCard(item: item) }.buttonStyle(.borderless)
+                                    NavigationLink(value: item) { TVPosterCard(item: item) }.playsOnPlayPause(item).buttonStyle(.borderless)
                                 }
                             }
                         }

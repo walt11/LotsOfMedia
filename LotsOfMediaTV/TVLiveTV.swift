@@ -263,7 +263,7 @@ struct TVLiveTVView: View {
         if !recorded.isEmpty {
             TVRow(title: "Recorded") {
                 ForEach(recorded) { item in
-                    NavigationLink(value: item) { TVPosterCard(item: item) }.buttonStyle(.borderless)
+                    NavigationLink(value: item) { TVPosterCard(item: item) }.playsOnPlayPause(item).buttonStyle(.borderless)
                 }
             }
             .padding(.horizontal, -60)

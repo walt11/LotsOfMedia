@@ -118,3 +118,22 @@ extension PlexMetadata {
     /// Wide artwork for Continue Watching (episode stills, movie backdrops).
     var tvWideArt: String? { kind == .episode ? (thumb ?? art ?? grandparentArt) : (art ?? thumb) }
 }
+
+// MARK: - Play/Pause on a card
+
+/// What a card's Play/Pause starts: one player over every tab (`TVRootView` shows it).
+@MainActor @Observable
+final class TVQuickPlay {
+    static let shared = TVQuickPlay()
+    var request: TVPlayRequest?
+}
+
+extension View {
+    /// Play/Pause on a focused card plays it (resuming), as in Apple's TV app; other kinds of
+    /// items keep their usual Select behavior.
+    func playsOnPlayPause(_ item: PlexMetadata) -> some View {
+        onPlayPauseCommand {
+            if item.isPlayableVideo { TVQuickPlay.shared.request = TVPlayRequest(item: item, resume: true) }
+        }
+    }
+}

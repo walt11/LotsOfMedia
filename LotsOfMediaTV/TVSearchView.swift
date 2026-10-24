@@ -13,7 +13,7 @@ struct TVSearchView: View {
                 ForEach(hubs) { hub in
                     TVRow(title: hub.title) {
                         ForEach(hub.metadata) { item in
-                            NavigationLink(value: item.kind == .track ? albumStandIn(for: item) : item) { TVPosterCard(item: item) }
+                            NavigationLink(value: item.kind == .track ? albumStandIn(for: item) : item) { TVPosterCard(item: item) }.playsOnPlayPause(item)
                                 .buttonStyle(.borderless)
                         }
                     }

@@ -108,6 +108,12 @@ struct TVRootView: View {
             .onChange(of: scenePhase) { _, phase in if phase == .active { session.refreshContentIfStale() } }
             // Live TV keeps playing in its corner window only while you're on the Live TV tab.
             .onChange(of: tab) { _, new in if new != .live { TVLiveNow.shared.stop() } }
+            .fullScreenCover(item: Binding(get: { TVQuickPlay.shared.request }, set: { TVQuickPlay.shared.request = $0 })) {
+                TVPlayerView(request: $0)
+            }
+            // The open tab went away (music stopped, the server has no DVR any more): back to Home.
+            .onChange(of: music.isActive) { _, active in if !active, tab == .nowPlaying { tab = .home } }
+            .onChange(of: live.isAvailable) { _, available in if !available, tab == .live { tab = .home } }
             .fullScreenCover(item: $playRequest) { TVPlayerView(request: $0) }
             .fullScreenCover(item: $openedItem) { item in
                 NavigationStack { TVDetailView(item: item).tvDestinations() }

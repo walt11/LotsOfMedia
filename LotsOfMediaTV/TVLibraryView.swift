@@ -156,7 +156,7 @@ struct TVLibraryView: View {
             }
             LazyVGrid(columns: columns, alignment: .leading, spacing: 56) {
                 ForEach(items) { item in
-                    NavigationLink(value: item) { TVPosterCard(item: item) }
+                    NavigationLink(value: item) { TVPosterCard(item: item) }.playsOnPlayPause(item)
                         .buttonStyle(.borderless)
                         .focused($focusedItem, equals: item.id)
                         .id(item.id)

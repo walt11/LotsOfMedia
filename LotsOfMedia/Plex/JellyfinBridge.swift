@@ -447,15 +447,25 @@ struct JellyfinBridge: Sendable {
         if !resume.isEmpty { hubs.append(hub("home.continue", "Continue Watching", resume, type: "mixed")) }
         let next = (try? await nextUp(parent: nil)) ?? []
         if !next.isEmpty { hubs.append(hub("home.ondeck", "Next Up", next, type: "episode", key: "/library/onDeck")) }
-        for lib in try await libraries() where ["movies", "tvshows", "music", "homevideos", nil].contains(lib.collectionType) {
-            let latest = (try? await latest(parent: lib.id)) ?? []
-            guard !latest.isEmpty else { continue }
+        // Each library's Recently Added, asked for all at once (kept in library order).
+        let libs = try await libraries().filter { ["movies", "tvshows", "music", "homevideos", nil].contains($0.collectionType) }
+        let latestByLibrary = await withTaskGroup(of: (String, Items).self) { group in
+            for lib in libs { group.addTask { (lib.id, Items(list: (try? await latest(parent: lib.id)) ?? [])) } }
+            var found: [String: Items] = [:]
+            for await (id, items) in group { found[id] = items }
+            return found
+        }
+        for lib in libs {
+            guard let latest = latestByLibrary[lib.id]?.list, !latest.isEmpty else { continue }
             let type = lib.collectionType == "music" ? "album" : lib.plexType
             hubs.append(hub("home.recentlyadded.\(lib.id)", "Recently Added in \(lib.name)", latest, type: type,
                             key: "/library/sections/\(lib.id)/all?sort=addedAt:desc\(lib.collectionType == "music" ? "&type=9" : "")"))
         }
         return hubs
     }
+
+    /// Decoded JSON handed between tasks (it's read-only once decoded).
+    private struct Items: @unchecked Sendable { let list: [JSON] }
 
     private func sectionHubs(_ id: String) async throws -> [JSON] {
         let lib = await library(id)

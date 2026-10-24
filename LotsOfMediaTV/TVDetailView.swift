@@ -8,7 +8,10 @@ struct TVDetailView: View {
     @State private var detail: PlexMetadata?
     @State private var children: [PlexMetadata] = []
     @State private var seasonKey: String?
+    /// The episodes of the season with something left to watch (for Play S1 E2).
     @State private var episodes: [PlexMetadata] = []
+    /// A show's episodes by season, loaded a season at a time (not the whole series at once).
+    @State private var seasonEpisodes: [String: [PlexMetadata]] = [:]
     @State private var playing: TVPlayRequest?
     @State private var showNowPlaying = false
     @State private var related: [PlexMetadata] = []
@@ -33,7 +36,7 @@ struct TVDetailView: View {
                     if !children.isEmpty {
                         TVRow(title: shown.kind == .artist ? "Albums" : "In This Collection") {
                             ForEach(children) { c in
-                                NavigationLink(value: c) { TVPosterCard(item: c) }.buttonStyle(.borderless)
+                                NavigationLink(value: c) { TVPosterCard(item: c) }.playsOnPlayPause(c).buttonStyle(.borderless)
                             }
                         }
                         .padding(.horizontal, -80)
@@ -45,7 +48,7 @@ struct TVDetailView: View {
                 if !related.isEmpty {
                     TVRow(title: shown.kind == .album || shown.kind == .artist ? "You Might Also Like" : "More Like This") {
                         ForEach(related) { r in
-                            NavigationLink(value: r) { TVPosterCard(item: r) }.buttonStyle(.borderless)
+                            NavigationLink(value: r) { TVPosterCard(item: r) }.playsOnPlayPause(r).buttonStyle(.borderless)
                         }
                     }
                     .padding(.horizontal, -80)
@@ -169,6 +172,18 @@ struct TVDetailView: View {
             }
         }
         .buttonStyle(TVActionStyle())
+        // Play/Pause on any of the buttons plays, as the main button would.
+        .onPlayPauseCommand { playPrimary() }
+    }
+
+    private func playPrimary() {
+        if shown.isPlayableVideo {
+            playing = TVPlayRequest(item: shown, resume: (shown.viewOffset ?? 0) > 0)
+        } else if shown.kind == .show, let next = nextEpisode {
+            playing = TVPlayRequest(item: next, resume: (next.viewOffset ?? 0) > 0)
+        } else if [.album, .playlist].contains(shown.kind), !tracks.isEmpty {
+            playQueue(tracks)
+        }
     }
 
     /// Your own 1–5 star rating.
@@ -256,14 +271,19 @@ struct TVDetailView: View {
                 }
             }
             .focusSection()
-            episodeList(episodes.filter { $0.parentRatingKey == currentSeason?.ratingKey })
+            episodeList(currentSeason.flatMap { seasonEpisodes[$0.ratingKey] } ?? [])
+                .task(id: currentSeason?.ratingKey) { await loadSeason(currentSeason) }
         }
     }
 
     private var currentSeason: PlexMetadata? {
         children.first { $0.ratingKey == seasonKey }
-            ?? children.first { s in episodes.contains { $0.parentRatingKey == s.ratingKey && !$0.isWatched } }
-            ?? children.first
+            ?? autoSeason
+    }
+
+    /// The first season with something left to watch, else the first.
+    private var autoSeason: PlexMetadata? {
+        children.first { ($0.viewedLeafCount ?? 0) < ($0.leafCount ?? 0) } ?? children.first
     }
 
     private func episodeList(_ list: [PlexMetadata]) -> some View {
@@ -286,6 +306,7 @@ struct TVDetailView: View {
                     .padding(16)
                 }
                 .buttonStyle(.card)
+                .onPlayPauseCommand { playing = TVPlayRequest(queue: list, start: i, resume: (ep.viewOffset ?? 0) > 0) }
                 // Press and hold an episode to mark it.
                 .contextMenu {
                     Button { Task { await session.setWatched(ep, !ep.isWatched) } } label: {
@@ -300,6 +321,13 @@ struct TVDetailView: View {
             }
         }
         .focusSection()
+    }
+
+    /// One season's episodes, once.
+    private func loadSeason(_ season: PlexMetadata?) async {
+        guard let season, seasonEpisodes[season.ratingKey] == nil, let api = session.api else { return }
+        let list = ((try? await api.children(season.ratingKey)) ?? []).filter(\.isPlayableVideo)
+        seasonEpisodes[season.ratingKey] = list
     }
 
     // MARK: Music
@@ -420,10 +448,12 @@ struct TVDetailView: View {
         }
         switch item.kind {
         case .show:
-            async let seasons = try? api.children(item.ratingKey)
-            async let all = try? api.allLeaves(item.ratingKey)
-            children = (await seasons ?? []).filter { $0.kind == .season }
-            episodes = await all ?? []
+            children = ((try? await api.children(item.ratingKey)) ?? []).filter { $0.kind == .season }
+            seasonEpisodes = [:]
+            await loadSeason(autoSeason)
+            // A season picked by hand comes back too (after playback, for new progress).
+            await loadSeason(currentSeason)
+            episodes = autoSeason.flatMap { seasonEpisodes[$0.ratingKey] } ?? []
         case .season, .album, .artist:
             children = (try? await api.children(item.ratingKey)) ?? []
         case .collection:
@@ -490,7 +520,7 @@ struct TVPersonView: View {
                 }
                 LazyVGrid(columns: columns, alignment: .leading, spacing: 56) {
                     ForEach(items) { item in
-                        NavigationLink(value: item) { TVPosterCard(item: item) }.buttonStyle(.borderless)
+                        NavigationLink(value: item) { TVPosterCard(item: item) }.playsOnPlayPause(item).buttonStyle(.borderless)
                     }
                 }
                 .focusSection()
