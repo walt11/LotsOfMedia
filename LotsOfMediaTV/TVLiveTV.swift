@@ -1044,6 +1044,15 @@ struct TVLiveHero: View {
         .frame(height: Self.window.height)
     }
 
+    /// "4.1 · FOX". Plex's airing channel title often repeats the number ("4.1 WDAFDT (FOX)"), so the lineup's name wins.
+    private func channelLine(_ airing: LiveAiring) -> String {
+        let name = live.channel(airing.channelID)?.title ?? airing.channelTitle ?? ""
+        var parts: [String] = []
+        if let number = airing.channelNumber, !number.isEmpty, !name.hasPrefix(number) { parts.append(number) }
+        if !name.isEmpty { parts.append(name) }
+        return parts.joined(separator: " · ").uppercased()
+    }
+
     @ViewBuilder private var info: some View {
         if let airing {
             // Redrawn every minute so "LIVE · 23 min left" and the progress stay current.
@@ -1054,7 +1063,7 @@ struct TVLiveHero: View {
                             TVImage(path: thumb, width: 80, height: 80, placeholderIcon: "tv")
                                 .frame(width: 40, height: 40).clipShape(RoundedRectangle(cornerRadius: 6))
                         }
-                        Text([airing.channelNumber, airing.channelTitle].compactMap { $0 }.joined(separator: " · ").uppercased())
+                        Text(channelLine(airing))
                             .font(.caption.weight(.bold)).tracking(1.5).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Text(airing.showTitle)
