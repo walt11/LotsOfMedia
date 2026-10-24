@@ -506,7 +506,7 @@ struct TVProfilePicker: View {
                         else { Task { await switchTo(user, pin: nil) } }
                     } label: {
                         VStack(spacing: 18) {
-                            TVAvatar(path: user.thumb, name: user.title, size: 200)
+                            TVProfileFace(user: user)
                             HStack(spacing: 8) {
                                 Text(user.title).font(.headline).lineLimit(1)
                                 if user.isProtected { Image(systemName: "lock.fill").font(.caption) }
@@ -536,6 +536,20 @@ struct TVProfilePicker: View {
 }
 
 /// Profile pictures that grow and gain a ring under focus.
+/// A profile's picture, ringed in the app's green while it's the one chosen.
+private struct TVProfileFace: View {
+    @Environment(\.isFocused) private var focused
+    let user: PlexHomeUser
+    /// The app icon's green.
+    static let green = Color(red: 94 / 255, green: 218 / 255, blue: 140 / 255)
+
+    var body: some View {
+        TVAvatar(path: user.thumb, name: user.title, size: 200)
+            .overlay { Circle().strokeBorder(Self.green, lineWidth: 6).padding(-12).opacity(focused ? 1 : 0) }
+            .animation(.easeOut(duration: 0.15), value: focused)
+    }
+}
+
 private struct TVProfileStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View { Face(configuration: configuration) }
     private struct Face: View {
