@@ -412,3 +412,173 @@ enum PlaylistCreation {
                 URLQueryItem(name: "uri", value: "server://\(machineIdentifier)/com.plexapp.plugins.library/library/metadata/\(keys)")]
     }
 }
+
+// MARK: - Holiday picks
+
+/// A holiday coming up, and how to find things for it in the library: titles with its words, and
+/// optionally a genre to fill the row out (Horror for Halloween). Each shows in the days before it.
+struct Holiday: Sendable, Equatable {
+    let id: String
+    let rowTitle: String
+    let keywords: [String]
+    var genres: [String] = []
+
+    static let newYear = Holiday(id: "newyear", rowTitle: "New Year's Picks", keywords: ["new year", "new year's eve"])
+    static let valentines = Holiday(id: "valentines", rowTitle: "Valentine's Day Picks",
+                                    keywords: ["valentine", "love", "romance", "wedding"], genres: ["Romance"])
+    static let stPatricks = Holiday(id: "stpatricks", rowTitle: "St. Patrick's Day Picks",
+                                    keywords: ["st. patrick", "saint patrick", "leprechaun", "irish", "ireland"])
+    static let easter = Holiday(id: "easter", rowTitle: "Easter Picks", keywords: ["easter", "bunny", "peter rabbit"])
+    static let july4 = Holiday(id: "july4", rowTitle: "Fourth of July Picks",
+                               keywords: ["independence day", "fourth of july", "4th of july", "fireworks", "patriot"])
+    static let halloween = Holiday(id: "halloween", rowTitle: "Halloween Picks",
+                                   keywords: ["halloween", "haunted", "ghost", "witch", "vampire", "zombie", "monster", "pumpkin",
+                                              "hocus pocus", "scooby", "goosebumps", "frankenstein", "dracula", "trick or treat"],
+                                   genres: ["Horror"])
+    static let thanksgiving = Holiday(id: "thanksgiving", rowTitle: "Thanksgiving Picks",
+                                      keywords: ["thanksgiving", "turkey", "pilgrim", "mayflower"])
+    static let christmas = Holiday(id: "christmas", rowTitle: "Christmas Picks",
+                                   keywords: ["christmas", "xmas", "santa", "grinch", "scrooge", "nutcracker", "elf", "reindeer",
+                                              "snowman", "home alone", "polar express", "noel", "claus"])
+
+    /// The holiday whose run-up `date` is in, if any.
+    static func current(on date: Date = .now, calendar: Calendar = .current) -> Holiday? {
+        let day = calendar.startOfDay(for: date)
+        let year = calendar.component(.year, from: day)
+        func on(_ month: Int, _ dayOfMonth: Int, year y: Int = year) -> Date {
+            calendar.date(from: DateComponents(year: y, month: month, day: dayOfMonth))!
+        }
+        func within(_ start: Date, _ end: Date) -> Bool { day >= start && day <= end }
+        func before(_ date: Date, days: Int) -> Date { calendar.date(byAdding: .day, value: -days, to: date)! }
+        let thanksgiving = thanksgivingDay(year: year, calendar: calendar)
+        let easterDay = easterSunday(year: year, calendar: calendar)
+        if within(on(12, 27), on(12, 31)) || day == on(1, 1) { return .newYear }
+        if within(on(2, 1), on(2, 14)) { return .valentines }
+        if within(on(3, 10), on(3, 17)) { return .stPatricks }
+        if within(before(easterDay, days: 10), easterDay) { return .easter }
+        if within(on(6, 27), on(7, 4)) { return .july4 }
+        if within(on(10, 1), on(10, 31)) { return .halloween }
+        if within(before(thanksgiving, days: 10), thanksgiving) { return .thanksgiving }
+        if within(calendar.date(byAdding: .day, value: 1, to: thanksgiving)!, on(12, 26)) { return .christmas }
+        return nil
+    }
+
+    /// The fourth Thursday of November (US).
+    static func thanksgivingDay(year: Int, calendar: Calendar = .current) -> Date {
+        let first = calendar.date(from: DateComponents(year: year, month: 11, day: 1))!
+        let weekday = calendar.component(.weekday, from: first)   // 1 = Sunday … 5 = Thursday
+        let firstThursday = 1 + (5 - weekday + 7) % 7
+        return calendar.date(from: DateComponents(year: year, month: 11, day: firstThursday + 21))!
+    }
+
+    /// Western Easter (the anonymous Gregorian algorithm).
+    static func easterSunday(year: Int, calendar: Calendar = .current) -> Date {
+        let a = year % 19, b = year / 100, c = year % 100, d = b / 4, e = b % 4
+        let f = (b + 8) / 25, g = (b - f + 1) / 3, h = (19 * a + b - d - g + 15) % 30
+        let i = c / 4, k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = (a + 11 * h + 22 * l) / 451
+        let month = (h + l - 7 * m + 114) / 31, dayOfMonth = (h + l - 7 * m + 114) % 31 + 1
+        return calendar.date(from: DateComponents(year: year, month: month, day: dayOfMonth))!
+    }
+
+    /// Whether `item`'s title has one of the holiday's words at the start of a word ("halloween"
+    /// finds "Halloweentown"; "elf" doesn't find "Shelf").
+    func matches(_ item: PlexMetadata) -> Bool {
+        let title = " " + Self.words(item.title)
+        return keywords.contains { title.contains(" " + Self.words($0)) }
+    }
+
+    /// Lowercase words split by spaces, without punctuation: "St. Patrick's" → "st patrick".
+    static func words(_ text: String) -> String {
+        let lower = text.lowercased().replacingOccurrences(of: "'s", with: "").replacingOccurrences(of: "’s", with: "")
+        return lower.map { $0.isLetter || $0.isNumber ? String($0) : " " }.joined()
+            .split(separator: " ").joined(separator: " ")
+    }
+}
+
+extension PlexServerAPI {
+    /// Movies, shows and episodes for `holiday`, unwatched first: titles with its words, then its
+    /// genre at random. Kept for the day, so Home doesn't search again every time it appears.
+    func holidayPicks(_ holiday: Holiday, limit: Int = 40) async -> [PlexMetadata] {
+        let cacheKey = [serverID, token ?? "", holiday.id, Self.dayStamp()].joined(separator: "|")
+        if let cached = HolidayCache.shared.get(cacheKey) { return cached }
+        let videoKinds: Set<PlexMetadata.Kind> = [.movie, .show, .episode]
+        // Movies and TV only: not home videos (an Other Videos library, or Jellyfin's home videos).
+        let libraries = ((try? await sections()) ?? []).filter(Self.isMovieOrTVLibrary)
+        let libraryIDs = Set(libraries.compactMap { Int($0.key) })
+        let found = await withTaskGroup(of: (Int, [PlexMetadata]).self) { group in
+            for (i, word) in holiday.keywords.enumerated() {
+                group.addTask {
+                    let hubs = (try? await container("/hubs/search", query: [
+                        URLQueryItem(name: "query", value: word), URLQueryItem(name: "limit", value: "30"),
+                    ]).hubs) ?? []
+                    // The server's search is fuzzy; keep what really has the word in its title.
+                    return (i, hubs.filter { $0.hubIdentifier != "search.video" }.flatMap(\.metadata).filter { item in
+                        videoKinds.contains(item.kind) && holiday.matches(item)
+                            && (item.librarySectionID.map(libraryIDs.contains) ?? true)
+                    })
+                }
+            }
+            var byWord: [(Int, [PlexMetadata])] = []
+            for await result in group { byWord.append(result) }
+            return byWord.sorted { $0.0 < $1.0 }.flatMap(\.1)
+        }
+        var seen = Set<String>()
+        var picks = found.filter { seen.insert($0.ratingKey).inserted }
+        // No more than three episodes of any one show.
+        var perShow: [String: Int] = [:]
+        picks = picks.filter { item in
+            guard item.kind == .episode else { return true }
+            let show = item.grandparentRatingKey ?? item.grandparentTitle ?? ""
+            perShow[show, default: 0] += 1
+            return perShow[show]! <= 3
+        }
+        if picks.count < limit, !holiday.genres.isEmpty {
+            picks += await genrePicks(holiday.genres, in: libraries, count: limit - picks.count).filter { seen.insert($0.ratingKey).inserted }
+        }
+        // Movies and shows before episodes; unwatched before watched.
+        let ordered = picks.enumerated().sorted { a, b in
+            let rank = { (item: PlexMetadata) in (item.kind == .episode ? 2 : 0) + (item.isWatched ? 1 : 0) }
+            return (rank(a.element), a.offset) < (rank(b.element), b.offset)
+        }.map(\.element)
+        let result = Array(ordered.prefix(limit))
+        HolidayCache.shared.set(cacheKey, result)
+        return result
+    }
+
+    /// A movie or TV library, not one of home videos (Plex's Other Videos have no metadata agent).
+    static func isMovieOrTVLibrary(_ section: PlexDirectory) -> Bool {
+        (section.type == "movie" || section.type == "show") && !(section.agent ?? "").hasSuffix(".none")
+    }
+
+    /// A random few from `libraries`' `genres`.
+    private func genrePicks(_ genres: [String], in libraries: [PlexDirectory], count: Int) async -> [PlexMetadata] {
+        guard count > 0 else { return [] }
+        let wanted = Set(genres.map { $0.lowercased() })
+        var picks: [PlexMetadata] = []
+        for section in libraries {
+            guard let genreList = try? await container("/library/sections/\(section.key)/genre").directories else { continue }
+            for genre in genreList where wanted.contains(genre.title.lowercased()) {
+                let items = (try? await page("/library/sections/\(section.key)/all", start: 0, size: count, query: [
+                    URLQueryItem(name: "genre", value: genre.key), URLQueryItem(name: "sort", value: "random"),
+                ]).metadata) ?? []
+                picks += items
+            }
+        }
+        return Array(picks.shuffled().prefix(count))
+    }
+
+    private static func dayStamp() -> String {
+        let parts = Calendar.current.dateComponents([.year, .month, .day], from: .now)
+        return "\(parts.year ?? 0)-\(parts.month ?? 0)-\(parts.day ?? 0)"
+    }
+}
+
+/// Holiday picks found today, by server, profile and holiday.
+private final class HolidayCache: @unchecked Sendable {
+    static let shared = HolidayCache()
+    private let lock = NSLock()
+    private var entries: [String: [PlexMetadata]] = [:]
+
+    func get(_ key: String) -> [PlexMetadata]? { lock.withLock { entries[key] } }
+    func set(_ key: String, _ items: [PlexMetadata]) { lock.withLock { entries[key] = items } }
+}

@@ -117,7 +117,7 @@ final class MediaPreferences {
         }
     }
     static func homeSections(_ mode: MediaMode) -> [String] {
-        mode == .music ? ["shortcuts", "recent", "playlists", "mixes", "albums", "favorites", "recommendations"] : ["resume", "watchLater", "recent", "next", "favorites", "recommendations", "featured"]
+        mode == .music ? ["shortcuts", "recent", "playlists", "mixes", "albums", "favorites", "recommendations"] : ["resume", "holiday", "watchLater", "recent", "next", "favorites", "recommendations", "featured"]
     }
     /// A calm Home to start with; the rest can be turned on in Customize Home.
     static func hiddenByDefault(_ mode: MediaMode) -> Set<String> {
@@ -135,6 +135,7 @@ final class MediaPreferences {
         case "mixes": return "Mixes"
         case "playlists": return "Playlists"
         case "featured": return "Featured Artwork"
+        case "holiday": return "Holiday Picks"
         default: return "Recommendations"
         }
     }

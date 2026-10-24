@@ -42,6 +42,18 @@ final class JellyfinLiveTests: XCTestCase {
         try await api.page("/library/sections/\(section.key)/all", start: 0, size: 50, query: query)
     }
 
+    /// Holiday picks search titles for the holiday's words (here, words in the sample library's
+    /// titles), keep only real word matches, and put movies first.
+    func testHolidayPicks() async throws {
+        let holiday = Holiday(id: "test-\(UUID().uuidString)", rowTitle: "Test Picks", keywords: ["sample", "second", "ample"])
+        let picks = await api.holidayPicks(holiday)
+        let titles = Set(picks.map(\.title))
+        XCTAssertTrue(titles.contains("Sample Movie"), "\(titles)")
+        XCTAssertTrue(titles.contains { $0.hasPrefix("Second Movie") }, "\(titles)")
+        XCTAssertTrue(picks.allSatisfy(holiday.matches), "\(titles)")
+        XCTAssertEqual(picks.count, Set(picks.map(\.ratingKey)).count)
+    }
+
     func testSignInAndConnection() async throws {
         XCTAssertTrue(server.isJellyfin)
         XCTAssertNotNil(server.jellyfinUserID)

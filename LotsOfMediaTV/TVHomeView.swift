@@ -8,6 +8,9 @@ struct TVHomeView: View {
     private var spotlight: TVSpotlight { .shared }
     @State private var continueWatching: [PlexMetadata] = []
     @State private var hubs: [PlexHub] = []
+    /// Picks for a holiday coming up (Halloween, Christmas…), from the library.
+    @State private var holiday: Holiday?
+    @State private var holidayItems: [PlexMetadata] = []
     @State private var loaded = false
     @State private var playing: TVPlayRequest?
     @State private var opening: PlexMetadata?
@@ -30,6 +33,13 @@ struct TVHomeView: View {
                                     TVWideCard(item: item) { playing = TVPlayRequest(item: item, resume: true) }
                                         .playsOnPlayPause(item)
                                         .contextMenu { continueMenu(item) }
+                                }
+                            }
+                        }
+                        if let holiday, holidayItems.count >= 3 {
+                            TVRow(title: holiday.rowTitle) {
+                                ForEach(holidayItems) { item in
+                                    NavigationLink(value: item) { TVPosterCard(item: item) }.playsOnPlayPause(item).buttonStyle(.borderless)
                                 }
                             }
                         }
@@ -95,6 +105,12 @@ struct TVHomeView: View {
         }
         spotlight.seed(continueWatching.first ?? hubs.first?.metadata.first)
         loaded = true
+        // After the rest, so Home doesn't wait on the searches.
+        let upcoming = Holiday.current()
+        let picks = upcoming == nil ? [] : await api.holidayPicks(upcoming!)
+        guard !Task.isCancelled, session.api?.serverID == api.serverID else { return }
+        holiday = upcoming
+        holidayItems = picks
     }
 }
 

@@ -301,3 +301,37 @@ final class PlaybackFocusTests: XCTestCase {
         XCTAssertTrue(PlaybackFocus.owns(video))
     }
 }
+
+final class HolidayTests: XCTestCase {
+    private func day(_ text: String) -> Date {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f.date(from: text)!
+    }
+
+    func testHolidayCalendar() {
+        XCTAssertEqual(Holiday.current(on: day("2026-09-30")), nil)
+        XCTAssertEqual(Holiday.current(on: day("2026-10-01")), .halloween)
+        XCTAssertEqual(Holiday.current(on: day("2026-10-31")), .halloween)
+        XCTAssertEqual(Holiday.current(on: day("2026-11-16")), .thanksgiving)   // Thanksgiving is Nov 26
+        XCTAssertEqual(Holiday.current(on: day("2026-11-26")), .thanksgiving)
+        XCTAssertEqual(Holiday.current(on: day("2026-11-27")), .christmas)
+        XCTAssertEqual(Holiday.current(on: day("2026-12-26")), .christmas)
+        XCTAssertEqual(Holiday.current(on: day("2026-12-27")), .newYear)
+        XCTAssertEqual(Holiday.current(on: day("2027-01-01")), .newYear)
+        XCTAssertEqual(Holiday.current(on: day("2027-01-02")), nil)
+        XCTAssertEqual(Holiday.current(on: day("2027-03-28")), .easter)         // Easter 2027
+        XCTAssertEqual(Holiday.current(on: day("2026-07-04")), .july4)
+    }
+
+    func testHolidayWordsMatchAtWordStarts() {
+        func item(_ title: String) -> PlexMetadata {
+            try! JSONDecoder().decode(PlexMetadata.self, from: Data(#"{"ratingKey":"1","type":"movie","title":"\#(title)"}"#.utf8))
+        }
+        XCTAssertTrue(Holiday.halloween.matches(item("Halloweentown High")))
+        XCTAssertTrue(Holiday.christmas.matches(item("Elf")))
+        XCTAssertFalse(Holiday.christmas.matches(item("The Shelf")))
+        XCTAssertTrue(Holiday.stPatricks.matches(item("St. Patrick's Day")))
+        XCTAssertTrue(Holiday.newYear.matches(item("New Year's Eve")))
+    }
+}

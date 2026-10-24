@@ -20,6 +20,9 @@ struct HomeView: View {
     @State private var continueWatching: [PlexMetadata] = []
     @State private var nextEpisodes: [PlexMetadata] = []
     @State private var hubs: [PlexHub] = []
+    /// Picks for a holiday coming up (Halloween, Christmas…), from the library.
+    @State private var holiday: Holiday?
+    @State private var holidayItems: [PlexMetadata] = []
     @State private var loading = false
     @State private var error: String?
 
@@ -82,6 +85,10 @@ struct HomeView: View {
                     // New episodes and seasons show as their show, once each.
                     if !hub.metadata.isEmpty { HubRow(title: hub.title, items: ShowGrouping.showLevel(hub.metadata)) }
                 }
+        case "holiday":
+                if let holiday, holidayItems.count >= 3 {
+                    HubRow(title: holiday.rowTitle, items: holidayItems)
+                }
         case "next":
                 if !nextEpisodes.isEmpty {
                     HubRow(title: "Next Episodes", items: nextEpisodes, wide: true)
@@ -138,6 +145,12 @@ struct HomeView: View {
         } catch {
             self.error = error.localizedDescription
         }
+        // After the rest, so Home doesn't wait on the searches.
+        let comingHoliday = mediaMode == .watch ? Holiday.current() : nil
+        let picks = comingHoliday == nil ? [] : await api.holidayPicks(comingHoliday!)
+        guard !Task.isCancelled else { return }
+        holiday = comingHoliday
+        holidayItems = picks
     }
 }
 

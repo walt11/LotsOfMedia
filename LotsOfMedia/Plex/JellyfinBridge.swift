@@ -348,6 +348,8 @@ struct JellyfinBridge: Sendable {
         var directory: JSON {
             var d: JSON = ["key": id, "title": name, "type": plexType, "uuid": id]
             if imageTag != nil { d["thumb"] = "/Items/\(id)/Images/Primary" }
+            // Home videos, marked the way Plex marks an Other Videos library.
+            if collectionType == "homevideos" { d["agent"] = "com.plexapp.agents.none" }
             return d
         }
     }
@@ -547,7 +549,8 @@ struct JellyfinBridge: Sendable {
         ]
         return groups.compactMap { jfType, plexType, title in
             let found = list.filter { $0["Type"] as? String == jfType }.prefix(limit)
-            return found.isEmpty ? nil : hub("search.\(plexType)", title, Array(found), type: plexType)
+            // Home videos get their own hub id, so holiday picks can leave them out.
+            return found.isEmpty ? nil : hub(jfType == "Video" ? "search.video" : "search.\(plexType)", title, Array(found), type: plexType)
         }
     }
 
