@@ -458,11 +458,14 @@ final class DownloadManager {
                 if existing.state == .failed { retry(existing.id) }
                 continue
             }
-            var rec = DownloadRecord(serverID: serverID, metadata: item, quality: quality ?? qualityForNewDownloads)
+            let requestedQuality: DownloadQuality = ServerDirectory.shared.server(id: serverID)?.isJellyfin == true ? .original : (quality ?? qualityForNewDownloads)
+            var rec = DownloadRecord(serverID: serverID, metadata: item, quality: requestedQuality)
             guard seen.insert(rec.id).inserted else { continue }
             rec.forceConversion = forceConversion
             rec.batchID = batchID
             rec.batchTitle = batchID == nil ? nil : batchTitle
+            rec.mediaID = item.playbackMediaID ?? MediaVersionChoice.mediaID(for: item.ratingKey, serverID: serverID)
+            if rec.mediaID == nil, let first = item.media.first { rec.mediaID = first.id }
             newRecords.append(rec)
         }
         guard !newRecords.isEmpty else { return }
@@ -762,8 +765,17 @@ final class DownloadManager {
     func recordOfflineProgress(_ id: String, positionMs: Int, durationMs: Int?, userID: String?) {
         guard let i = index(of: id) else { return }
         records[i].updateProgress(userID: userID, positionMs: positionMs, durationMs: durationMs)
-        if userID == activeUserID { projectProgress(at: i, clearUnknown: false) }
+        if records[i].ownerKey(userID) == records[i].ownerKey(activeUserID) { projectProgress(at: i, clearUnknown: false) }
         scheduleSave()
+    }
+
+    /// Refresh cached UI progress when a provider login changes without a Plex profile change.
+    func refreshProgressOwnership() {
+        let user = activeUserID
+        updateRecords { all in
+            for i in all.indices { Self.projectProgress(&all[i], userID: user, clearUnknown: true) }
+        }
+        saveNow()
     }
 
     /// Acknowledges only the version sent, never a newer playback update.
@@ -776,6 +788,8 @@ final class DownloadManager {
             guard userID == activeUserID else { break }
             guard let progress = rec.progress(for: userID), progress.pending,
                   let api = ServerDirectory.shared.api(for: rec.serverID) else { continue }
+            let ownerKey = rec.ownerKey(userID)
+            guard ServerDirectory.shared.authorizes(api) else { continue }
             do {
                 if progress.watched {
                     try await api.scrobble(rec.metadata.ratingKey)
@@ -783,7 +797,7 @@ final class DownloadManager {
                     try await api.setProgress(ratingKey: rec.metadata.ratingKey, timeMs: progress.offset)
                 }
                 if let i = index(of: rec.id) {
-                    records[i].acknowledgeProgress(userID: userID, revision: progress.revision)
+                    records[i].acknowledgeProgress(ownerKey: ownerKey, revision: progress.revision)
                 }
             } catch { continue }
         }
@@ -812,7 +826,8 @@ final class DownloadManager {
                 updated[i].metadata.viewCount = item.viewCount
                 updated[i].metadata.lastViewedAt = item.lastViewedAt
                 if updated[i].userProgress == nil { updated[i].userProgress = [:] }
-                updated[i].userProgress?[DownloadRecord.progressKey(userID)] = OfflineProgress(
+                let key = updated[i].ownerKey(userID)
+                updated[i].userProgress?[key] = OfflineProgress(
                     offset: item.viewOffset ?? 0, watched: (item.viewCount ?? 0) > 0, pending: false)
                 changed = true
             }
@@ -828,7 +843,8 @@ final class DownloadManager {
         records[i].metadata.viewOffset = metadata.viewOffset
         records[i].metadata.viewCount = metadata.viewCount
         if records[i].userProgress == nil { records[i].userProgress = [:] }
-        records[i].userProgress?[DownloadRecord.progressKey(activeUserID)] = OfflineProgress(
+        let key = records[i].ownerKey(activeUserID)
+        records[i].userProgress?[key] = OfflineProgress(
             offset: metadata.viewOffset ?? 0, watched: (metadata.viewCount ?? 0) > 0, pending: false)
         scheduleSave()
     }
@@ -1136,9 +1152,15 @@ final class DownloadManager {
             if records[i].progress(for: activeUserID)?.pending == true { merged.viewOffset = records[i].metadata.viewOffset; merged.viewCount = records[i].metadata.viewCount }
             records[i].metadata = merged
 
-            guard let media = fresh.primaryMedia, let part = media.parts.first, let partKey = part.key else {
+            // The version chosen when it was queued, if the server still has it.
+            if let mediaID = rec.mediaID, !fresh.media.contains(where: { $0.id == mediaID }) {
+                throw PlexError.unsupported("The queued media version is no longer available. Remove this download and choose a version again.")
+            }
+            let mediaIndex = rec.mediaID.flatMap { id in fresh.media.firstIndex { $0.id == id } } ?? 0
+            guard fresh.media.indices.contains(mediaIndex), let part = fresh.media[mediaIndex].parts.first, let partKey = part.key else {
                 throw PlexError.unsupported("This item has no downloadable media.")
             }
+            let media = fresh.media[mediaIndex]
             saveSubtitles(id: id, part: part, api: api)
 
             // Never store something the device can't play: convert whenever the
@@ -1154,7 +1176,7 @@ final class DownloadManager {
             if wantsConversion {
                 do {
                     let sidecarSelected = part.selectedSubtitle?.isSidecarText ?? false
-                    let ids = try await ServerConversion.enqueue(api: api, ratingKey: fresh.ratingKey, mediaIndex: fresh.primaryMediaIndex, quality: quality,
+                    let ids = try await ServerConversion.enqueue(api: api, ratingKey: fresh.ratingKey, mediaIndex: mediaIndex, quality: quality,
                                                                  burnSubtitles: !sidecarSelected, forceTranscode: rec.forceConversion == true)
                     guard ServerDirectory.shared.authorizes(api), let i = index(of: id), records[i].state == .queued else { return }
                     records[i].source = .queue(queueID: ids.queueID, itemID: ids.itemID)

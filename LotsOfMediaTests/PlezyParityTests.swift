@@ -219,6 +219,25 @@ final class PlezyParityTests: XCTestCase {
 
     // MARK: Versions
 
+    /// Rating keys are only unique within a server: a choice on one isn't another's.
+    func testVersionChoiceIsKeptPerServer() throws {
+        let json: [String: Any] = ["ratingKey": "v-test-2", "type": "movie", "title": "M", "Media": [
+            ["id": 21, "Part": [["id": 1, "key": "/a"]]], ["id": 22, "Part": [["id": 2, "key": "/b"]]],
+        ]]
+        let saved = MediaVersionChoice.serverID
+        defer { MediaVersionChoice.serverID = saved }
+        let item = try decode(json)
+        MediaVersionChoice.serverID = "server-A"
+        MediaVersionChoice.shared.choose(item.media[1], of: item)
+        defer { MediaVersionChoice.serverID = "server-A"; MediaVersionChoice.shared.choose(item.media[0], of: item) }
+        XCTAssertEqual(try decode(json).primaryMediaIndex, 1)
+        MediaVersionChoice.serverID = "server-B"
+        XCTAssertEqual(try decode(json).primaryMediaIndex, 0, "the same key on another server keeps its first version")
+        MediaVersionChoice.shared.choose(item.media[0], of: item)
+        MediaVersionChoice.serverID = "server-A"
+        XCTAssertEqual(try decode(json).primaryMediaIndex, 1, "and choosing there doesn't erase server A's choice")
+    }
+
     func testVersionChoiceIsRememberedPerTitle() throws {
         let json: [String: Any] = ["ratingKey": "v-test-1", "type": "movie", "title": "M", "Media": [
             ["id": 11, "videoResolution": "4k", "Part": [["id": 1, "key": "/a"]]],
@@ -234,6 +253,26 @@ final class PlezyParityTests: XCTestCase {
         let url = PlaybackDecider.transcodeURL(api: PlexServerAPI(baseURL: URL(string: "http://p:32400")!, token: "t", serverID: "s"),
                                                item: item, quality: .original, sessionID: "x", isLocal: true)
         XCTAssertTrue(url.absoluteString.contains("mediaIndex=0"))
+    }
+
+    func testPlaybackVersionSurvivesServerAndPreferenceChanges() throws {
+        let item = try decode(["ratingKey": "frozen-version", "type": "movie", "title": "M", "Media": [
+            ["id": 41, "Part": [["id": 1, "key": "/a"]]], ["id": 42, "Part": [["id": 2, "key": "/b"]]],
+        ]])
+        let previous = MediaVersionChoice.serverID
+        MediaVersionChoice.serverID = "frozen-A"
+        defer {
+            MediaVersionChoice.serverID = "frozen-A"
+            MediaVersionChoice.shared.choose(item.media[0], of: item)
+            MediaVersionChoice.serverID = previous
+        }
+        MediaVersionChoice.shared.choose(item.media[1], of: item)
+        let requestItem = item.forPlayback(serverID: "frozen-A")
+        MediaVersionChoice.shared.choose(item.media[0], of: item)
+        MediaVersionChoice.serverID = "frozen-B"
+        XCTAssertEqual(requestItem.primaryMediaIndex, 1)
+        XCTAssertEqual(item.usingPlaybackVersion(of: requestItem).primaryPart?.key, "/b")
+        XCTAssertEqual(item.primaryMediaIndex, 0)
     }
 
     // MARK: Ratings

@@ -1,4 +1,5 @@
 import AVKit
+import MediaPlayer
 import SwiftUI
 
 /// Live TV & DVR (a Pro feature): a TV guide grid, what's on now, and recordings, with
@@ -96,7 +97,10 @@ struct TVLiveTVView: View {
         .onChange(of: now.isFullScreen) { was, isFull in if was && !isFull { catchUpGuide() } }
         .onExitCommand(perform: focusWindowOnBack)
         // Play/Pause on the remote returns to the playing channel.
-        .onPlayPauseCommand { if now.channel != nil, !now.isFullScreen { now.isFullScreen = true } }
+        .onPlayPauseCommand {
+            guard now.channel != nil else { return }
+            if now.isFullScreen { now.togglePause() } else { now.isFullScreen = true }
+        }
         .sheet(item: $selected) { airing in
             TVAiringDetail(airing: airing) { channel in selected = nil; watch(channel) }
         }
@@ -141,7 +145,8 @@ struct TVLiveTVView: View {
     private func showMiniSample() {
         guard ProcessInfo.processInfo.arguments.contains("-tvMiniSample"), now.channel == nil, let first = live.channels.first else { return }
         now.watch(first, session: session)
-        now.isFullScreen = false
+        // `-tvLiveFull`: stay full screen.
+        if !ProcessInfo.processInfo.arguments.contains("-tvLiveFull") { now.isFullScreen = false }
     }
     #endif
 
@@ -401,10 +406,17 @@ struct TVGuideGrid<Menu: View>: View {
                                 }
                             }
                             .padding(.vertical, 10)
-                            .overlay(alignment: .topLeading) { nowLine(perSecond: perSecond) }
                         }
                     }
                     .scrollClipDisabled()
+                    // From the top of the grid down over every row: drawn on the grid's frame, not on the
+                    // scrolling list (which isn't clipped, for the focus lift, so a line on it reached up
+                    // past the grid once scrolled); as tall as the rows, which may run past the frame.
+                    .overlay(alignment: .topLeading) {
+                        TimelineView(.everyMinute) { _ in
+                            nowLine(perSecond: perSecond).frame(height: CGFloat(channels.count) * (rowHeight + 6) + 20, alignment: .top)
+                        }
+                    }
                 }
                 .onChange(of: focus) { old, new in
                     if case .airing(let id)? = new, let landed = airing(withID: id) {
@@ -621,6 +633,7 @@ struct TVGuideGrid<Menu: View>: View {
                 .frame(width: 3)
                 .frame(maxHeight: .infinity)
                 .offset(x: channelWidth + 12 + CGFloat(offset) * perSecond)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .allowsHitTesting(false)
         }
     }
@@ -875,6 +888,13 @@ final class TVLiveNow {
     @ObservationIgnored private var activeObserver: NSObjectProtocol?
     /// When the corner window was paused because the app went inactive (the screen saver).
     @ObservationIgnored private var pausedInactive: Date?
+    /// When playback last paused or played, so a press handled one way isn't handled again another.
+    @ObservationIgnored private var lastRateChange = Date.distantPast
+    @ObservationIgnored private var rateObservation: NSKeyValueObservation?
+    /// The channel's own Now Playing session: tvOS sends the remote's Play/Pause button as a command
+    /// to the active session, and without one of its own the channel's press went elsewhere (the
+    /// music player's commands, or Apple's player, which does nothing with it on a live stream).
+    @ObservationIgnored private var nowPlaying: MPNowPlayingSession?
 
     private init() {
         // Away at the Home Screen, the app stops keeping the server's live session alive and the
@@ -936,13 +956,58 @@ final class TVLiveNow {
             let c = TVLivePlaybackController(channel: channel, session: session) { [weak self] in self?.stop() }
             c.onChannelChange = { [weak self] in self?.channel = $0 }
             controller = c
+            rateObservation = c.player.observe(\.rate) { [weak self] _, _ in
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.lastRateChange = Date() } }
+            }
+            startNowPlaying(c.player)
             c.start()
         }
         self.channel = channel
         isFullScreen = true
     }
 
+    /// Play/Pause (or Select on the picture) pressed at `pressedAt`: pauses or plays, unless playback
+    /// already did for this press. The press can arrive several ways (the player view, tvOS's remote
+    /// commands, the Live TV page), and Apple's player handles it itself on a stream it can seek in.
+    func togglePause(pressedAt: Date = Date()) {
+        #if DEBUG
+        TVLivePlaybackController.debugLog("togglePause")
+        #endif
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, let player = self.player, self.lastRateChange < pressedAt.addingTimeInterval(-0.8) else { return }
+                #if DEBUG
+                TVLivePlaybackController.debugLog("toggled here")
+                #endif
+                if player.rate == 0 { player.play() } else { player.pause() }
+            }
+        }
+    }
+
+    private func startNowPlaying(_ player: AVPlayer) {
+        let session = MPNowPlayingSession(players: [player])
+        session.automaticallyPublishesNowPlayingInfo = true
+        let commands = session.remoteCommandCenter
+        commands.togglePlayPauseCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated {
+                #if DEBUG
+                TVLivePlaybackController.debugLog("remote command togglePlayPause")
+                #endif
+                guard let self, self.channel != nil else { return }
+                // In the corner window, Play/Pause returns to the channel full screen.
+                if self.isFullScreen { self.togglePause() } else { self.isFullScreen = true }
+            }
+            return .success
+        }
+        commands.playCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.player?.play() }; return .success }
+        commands.pauseCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.player?.pause() }; return .success }
+        session.becomeActiveIfPossible { _ in }
+        nowPlaying = session
+    }
+
     func stop() {
+        nowPlaying = nil
+        rateObservation = nil
         pausedInactive = nil
         controller?.stop()
         controller = nil
@@ -958,7 +1023,7 @@ struct TVLiveFullScreen: View {
 
 private struct TVLiveFullScreenRepresentable: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> AVPlayerViewController {
-        let vc = AVPlayerViewController()
+        let vc = TVLivePlayerViewController()
         vc.allowsPictureInPicturePlayback = false
         if let c = TVLiveNow.shared.controller {
             vc.player = c.player
@@ -969,6 +1034,57 @@ private struct TVLiveFullScreenRepresentable: UIViewControllerRepresentable {
     }
     func updateUIViewController(_ vc: AVPlayerViewController, context: Context) {}
     // Leaving full screen keeps the channel playing (the corner window shows it).
+}
+
+/// Retains readable seek status over live video. A fallback handles the dedicated Play/Pause
+/// button when AVKit does not act; Select remains owned by AVKit's focused controls.
+private final class TVLivePlayerViewController: AVPlayerViewController, UIGestureRecognizerDelegate {
+    /// Beginning of the current dedicated remote-button press.
+    private var pressStarted = Date.distantPast
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        // Select too: right after tuning (a buffer of a few seconds) Apple's player ignores it.
+        for type in [UIPress.PressType.playPause, .select] {
+            let tap = UITapGestureRecognizer(target: self, action: #selector(pressed(_:)))
+            tap.allowedPressTypes = [NSNumber(value: type.rawValue)]
+            tap.cancelsTouchesInView = false
+            tap.delegate = self
+            view.addGestureRecognizer(tap)
+        }
+    }
+
+    func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if presses.contains(where: { $0.type == .playPause || $0.type == .select }) { pressStarted = Date() }
+        super.pressesBegan(presses, with: event)
+    }
+
+    @objc private func pressed(_ tap: UITapGestureRecognizer) {
+        let focused = view.window?.windowScene?.focusSystem?.focusedItem
+        #if DEBUG
+        TVLivePlaybackController.debugLog("press \(tap.allowedPressTypes) focused=\(focused.map { String(describing: type(of: $0)) } ?? "nil")")
+        #endif
+        // Select only pauses from the picture itself, not on a button or menu (Jump to Live…).
+        let isSelect = tap.allowedPressTypes.contains(NSNumber(value: UIPress.PressType.select.rawValue))
+        if isSelect, !Self.isPicture(focused) { return }
+        // When the press began (Apple's player acts then); if that wasn't heard, a moment ago.
+        let pressedAt = Date().timeIntervalSince(pressStarted) < 2 ? pressStarted : Date().addingTimeInterval(-0.6)
+        TVLiveNow.shared.togglePause(pressedAt: pressedAt)
+    }
+
+    /// Whether focus is on the playing picture: nothing, or a view that isn't a control, a cell or
+    /// inside one.
+    private static func isPicture(_ item: (any UIFocusItem)?) -> Bool {
+        guard let item else { return true }
+        guard var view = item as? UIView else { return false }
+        while true {
+            if view is UIControl || view is UICollectionViewCell || view is UITableViewCell { return false }
+            guard let parent = view.superview else { return true }
+            view = parent
+        }
+    }
 }
 
 /// The playing channel's window in the preview band: select for full screen; press and hold to stop.
@@ -1230,6 +1346,19 @@ final class TVLivePlaybackController: NSObject {
         tuneTask?.cancel()
         channel = ch
         updateMenu()
+        #if DEBUG
+        // Development: `-tvLiveURL <url>` plays that stream for any channel (no tuner needed).
+        let args = ProcessInfo.processInfo.arguments
+        if let i = args.firstIndex(of: "-tvLiveURL"), args.indices.contains(i + 1), let url = URL(string: args[i + 1]) {
+            // Arrives a few seconds later, like a tuned channel.
+            tuneTask = Task {
+                try? await Task.sleep(for: .seconds(4))
+                player.replaceCurrentItem(with: AVPlayerItem(url: url))
+                player.play()
+            }
+            return
+        }
+        #endif
         guard let api = session.api, let dvr = live.dvr else { return }
         let previousEnd = ending
         tuneTask = Task {
@@ -1266,6 +1395,9 @@ final class TVLivePlaybackController: NSObject {
                     }
                 }
                 guard let url, !Task.isCancelled, !stopped else { return }
+                #if DEBUG
+                Self.logPlaylist(url)
+                #endif
                 let item = AVPlayerItem(url: url)
                 item.externalMetadata = metadata()
                 item.preferredForwardBufferDuration = 6
@@ -1325,7 +1457,50 @@ final class TVLivePlaybackController: NSObject {
     }
 
     /// Keeps the server's live session alive.
+    #if DEBUG
+    /// Development builds append lines to Caches/live-state.log (read from the host by UI tests,
+    /// or from a TV with `devicectl device copy from`).
+    nonisolated static func debugLog(_ text: String) {
+        guard ProcessInfo.processInfo.arguments.contains("-tvLiveDiagnostics") else { return }
+        guard let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
+        let line = "\(Int(Date().timeIntervalSince1970)) \(text)\n"
+        let url = dir.appendingPathComponent("live-state.log")
+        // Kept small: started over past 1 MB.
+        if let size = try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int, size > 1_000_000 {
+            try? FileManager.default.removeItem(at: url)
+        }
+        if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
+        else { try? Data(line.utf8).write(to: url) }
+    }
+    #endif
+
+    #if DEBUG
+    /// The stream's playlists as the server sends them (without query strings, which carry the token).
+    static func logPlaylist(_ url: URL) {
+        guard ProcessInfo.processInfo.arguments.contains("-tvLiveDiagnostics") else { return }
+        Task.detached {
+            func fetch(_ u: URL) async -> String { (try? await URLSession.shared.data(from: u)).flatMap { String(data: $0.0, encoding: .utf8) } ?? "" }
+            let master = await fetch(url)
+            debugLog("master:\n" + master.split(separator: "\n").prefix(8).map { $0.split(separator: "?").first.map(String.init) ?? "" }.joined(separator: "\n"))
+            guard let variant = master.split(separator: "\n").first(where: { !$0.hasPrefix("#") && !$0.isEmpty }),
+                  let variantURL = URL(string: String(variant), relativeTo: url) else { return }
+            for wait in [0, 30, 60] {
+                try? await Task.sleep(for: .seconds(wait == 0 ? 3 : 30))
+                let media = await fetch(variantURL)
+                let lines = media.split(separator: "\n")
+                debugLog("media after \(wait)s: \(lines.filter { $0.hasPrefix("#EXTINF") }.count) segments\n"
+                         + lines.filter { $0.hasPrefix("#EXT-X") }.prefix(10).joined(separator: "\n"))
+            }
+        }
+    }
+    #endif
+
     private func tick() {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-tvLiveDiagnostics") {
+        Self.debugLog("\(player.timeControlStatus == .paused ? "paused" : "playing") full=\(TVLiveNow.shared.isFullScreen) t=\(Int(player.currentTime().seconds.isFinite ? player.currentTime().seconds : 0)) seekable=\(player.currentItem?.seekableTimeRanges.last.map { "\(Int($0.timeRangeValue.start.seconds.isFinite ? $0.timeRangeValue.start.seconds : 0))-\(Int($0.timeRangeValue.end.seconds.isFinite ? $0.timeRangeValue.end.seconds : 0))" } ?? "none")")
+        }
+        #endif
         updateJumpToLive()
         guard let s = liveSession, let api = session.api, Date().timeIntervalSince(lastReport) >= 10 else { return }
         lastReport = Date()

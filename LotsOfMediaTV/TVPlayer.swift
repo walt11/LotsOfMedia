@@ -8,8 +8,8 @@ struct TVPlayRequest: Identifiable {
     let start: Int
     let resume: Bool
 
-    init(item: PlexMetadata, resume: Bool) { queue = [item]; start = 0; self.resume = resume }
-    init(queue: [PlexMetadata], start: Int, resume: Bool = false) { self.queue = queue; self.start = start; self.resume = resume }
+    init(item: PlexMetadata, resume: Bool) { queue = [item.forPlayback(serverID: MediaVersionChoice.serverID)]; start = 0; self.resume = resume }
+    init(queue: [PlexMetadata], start: Int, resume: Bool = false) { self.queue = queue.map { $0.forPlayback(serverID: MediaVersionChoice.serverID) }; self.start = start; self.resume = resume }
 }
 
 /// Full-screen playback. Apple's player (Siri Remote scrubbing, chapters, audio and subtitle
@@ -176,7 +176,7 @@ final class TVPlaybackController: NSObject {
         loadID = id
         if i != index || current == nil { triedCompatible = false; restartedConversion = false; avoidHEVC = false }
         index = i
-        var loaded = (try? await api.metadata(queue[i].ratingKey)) ?? queue[i]
+        var loaded = ((try? await api.metadata(queue[i].ratingKey)) ?? queue[i]).usingPlaybackVersion(of: queue[i])
         guard !stopped, id == loadID else { return }
         // The remembered languages, set on the server first so a conversion uses them too.
         let scope = TVLanguagePreference.scope(session: session)
@@ -187,7 +187,7 @@ final class TVPlaybackController: NSObject {
             try? await api.selectStreams(partID: partID, audioStreamID: change.audioStreamID, subtitleStreamID: change.subtitleStreamID)
             let key = loaded.ratingKey
             let fresh = (try? await LibraryCache.$requireFresh.withValue(true) { try await api.metadata(key) }) ?? nil
-            if let fresh { loaded = fresh }
+            if let fresh { loaded = fresh.usingPlaybackVersion(of: queue[i]) }
             guard !stopped, id == loadID else { return }
         }
         let item = loaded

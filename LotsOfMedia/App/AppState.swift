@@ -18,7 +18,10 @@ final class AppState {
     private(set) var servers: [PlexServer] = ServerDirectory.shared.servers
     /// Saved on every change: CarPlay and background work read it without the phone UI.
     private(set) var selectedServerID: String? = UserDefaults.standard.string(forKey: "selectedServerID") {
-        didSet { UserDefaults.standard.set(selectedServerID, forKey: "selectedServerID") }
+        didSet {
+            UserDefaults.standard.set(selectedServerID, forKey: "selectedServerID")
+            MediaVersionChoice.serverID = selectedServerID ?? ""
+        }
     }
     private(set) var api: PlexServerAPI?
     private(set) var status: ConnectionStatus = .idle {
@@ -254,6 +257,7 @@ final class AppState {
     /// A Jellyfin server just signed in to: saved, selected and connected.
     func addJellyfinServer(_ server: PlexServer) async {
         ServerDirectory.shared.upsert(server)
+        DownloadManager.shared.refreshProgressOwnership()
         if let uri = server.connections.first?.uri { ServerDirectory.shared.setEndpoint(uri, for: server.id) }
         servers = ServerDirectory.shared.servers
         select(serverID: server.id)
@@ -449,9 +453,13 @@ final class AppState {
 
     private func playRequest(_ item: PlexMetadata, serverID sid: String, fromStart: Bool) -> VideoPlayRequest {
         let record = DownloadManager.shared.record(serverID: sid, ratingKey: item.ratingKey)
-        let local = record.flatMap { DownloadManager.shared.localFileURL(for: $0) }
+        let selected = item.forPlayback(serverID: sid)
+        let local = record.flatMap { record -> URL? in
+            if let saved = record.mediaID, let chosen = selected.playbackMediaID, saved != chosen { return nil }
+            return DownloadManager.shared.localFileURL(for: record)
+        }
         let offset = fromStart ? 0 : record?.resumeOffset(for: currentUserID, serverOffset: item.viewOffset) ?? item.viewOffset ?? 0
-        return VideoPlayRequest(item: item, serverID: sid, startMs: offset, localURL: local,
+        return VideoPlayRequest(item: selected, serverID: sid, startMs: offset, localURL: local,
                                 downloadID: local == nil ? nil : record?.id)
     }
 

@@ -404,7 +404,7 @@ struct MovieDownloadTile: View {
     }
 
     var body: some View {
-        Button { app.play(record.metadata, serverID: record.serverID) } label: {
+        Button { app.play(record.playbackMetadata, serverID: record.serverID) } label: {
             PosterTile(path: record.metadata.posterThumb, localFile: DownloadStore.posterURL(id: record.id),
                        badge: badge, title: record.metadata.title,
                        caption: [Fmt.duration(ms: record.metadata.duration), record.totalBytes.map(Fmt.bytes)]
@@ -413,7 +413,7 @@ struct MovieDownloadTile: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
-            Button { app.play(record.metadata, serverID: record.serverID) } label: { Label("Play", systemImage: "play") }
+            Button { app.play(record.playbackMetadata, serverID: record.serverID) } label: { Label("Play", systemImage: "play") }
             NavigationLink(value: record.metadata.route) { Label("Details", systemImage: "info.circle") }
             Button(role: .destructive, action: onRemove) { Label("Remove Download", systemImage: "trash") }
         } preview: {
@@ -784,7 +784,7 @@ struct OfflineTrackRow: View {
             let list = siblings.isEmpty ? [record] : siblings
             audio.play(downloads: list, startAt: list.firstIndex(of: record) ?? 0)
         } else {
-            app.play(record.metadata, serverID: record.serverID)
+            app.play(record.playbackMetadata, serverID: record.serverID)
         }
     }
 }
@@ -802,7 +802,7 @@ struct CompletedDownloadRow: View {
                 let list = siblings.isEmpty ? [record] : siblings
                 audio.play(downloads: list, startAt: list.firstIndex(of: record) ?? 0)
             } else {
-                app.play(record.metadata, serverID: record.serverID)
+                app.play(record.playbackMetadata, serverID: record.serverID)
             }
         } label: {
             HStack(spacing: 12) {
@@ -816,7 +816,7 @@ struct CompletedDownloadRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(isEpisode ? (record.metadata.subtitleLine ?? record.metadata.title) : record.metadata.title)
                         .font(.subheadline.weight(.semibold)).lineLimit(2)
-                    Text([Fmt.duration(ms: record.metadata.duration), record.totalBytes.map(Fmt.bytes),
+                    Text([record.downloadedVersionLabel, Fmt.duration(ms: record.metadata.duration), record.totalBytes.map(Fmt.bytes),
                           record.isConverted ? (record.sourceContainer.map { "Converted from \($0.uppercased())" } ?? "Converted") : nil]
                             .compactMap { $0 }.joined(separator: " · "))
                         .font(.caption).foregroundStyle(.secondary)

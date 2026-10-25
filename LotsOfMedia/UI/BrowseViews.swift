@@ -1345,7 +1345,7 @@ struct PlaylistDetailView: View {
             }
         } else {
             Section("Download \(downloadable.count) item\(downloadable.count == 1 ? "" : "s")") {
-                ForEach(videos.isEmpty ? [DownloadQuality.original] : DownloadQuality.allCases) { q in
+                ForEach(videos.isEmpty || ServerDirectory.shared.server(id: app.selectedServerID ?? "")?.isJellyfin == true ? [DownloadQuality.original] : DownloadQuality.allCases) { q in
                     Button(q.label + (q == downloads.defaultQuality ? " (Default)" : "")) { startDownload(q) }
                 }
             }

@@ -76,3 +76,30 @@ final class LiveTVFocusUITests: XCTestCase {
         XCTAssertEqual(spotlight(app), onNow, "on the first channel, on now")
     }
 }
+
+/// Full-screen live TV over a local test stream: Play/Pause and Select are pressed with pauses
+/// between, while the app logs the player's state (read from the host). Development only.
+final class LivePlayPauseUITests: XCTestCase {
+    func testPlayPausePresses() throws {
+        guard let stream = ProcessInfo.processInfo.environment["LIVE_URL"] else {
+            throw XCTSkip("Set LIVE_URL to a live HLS fixture (tools/live_seek_fixture.py).")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["-proUnlocked", "-tvLiveSample", "-tvTab", "live", "-tvMiniSample",
+                               "-tvLiveURL", stream, "-tvLiveDiagnostics", "-tvLiveFull"]
+        app.launch()
+        sleep(10)
+        XCUIRemote.shared.press(.playPause)   // pause
+        sleep(8)
+        XCUIRemote.shared.press(.playPause)   // play
+        sleep(8)
+        XCUIRemote.shared.press(.select)      // pause
+        sleep(8)
+        XCUIRemote.shared.press(.select)      // play
+        sleep(8)
+        XCUIRemote.shared.press(.playPause)   // pause and play again, quickly
+        sleep(1)
+        XCUIRemote.shared.press(.playPause)
+        sleep(8)
+    }
+}

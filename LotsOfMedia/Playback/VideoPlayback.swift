@@ -10,6 +10,16 @@ struct VideoPlayRequest: Identifiable {
     /// Set when playing a completed download.
     let localURL: URL?
     let downloadID: String?
+    let progressUserID: String?
+
+    init(item: PlexMetadata, serverID: String, startMs: Int, localURL: URL?, downloadID: String?) {
+        self.item = item.forPlayback(serverID: serverID)
+        self.serverID = serverID
+        self.startMs = startMs
+        self.localURL = localURL
+        self.downloadID = downloadID
+        self.progressUserID = DownloadRecord.playbackUserID(serverID: serverID, plexUserID: UserDefaults.standard.string(forKey: "currentUserUUID"))
+    }
 }
 
 /// Owns an AVPlayer for one video and keeps Plex informed of progress.
@@ -48,7 +58,7 @@ final class VideoPlaybackController: ObservableObject, VideoQueueing {
     var subtitlesAreAppRendered: Bool { !cues.isEmpty }
     var canSearchSubtitles: Bool { api != nil && request.localURL == nil && NetworkMonitor.shared.isConnected }
 
-    private let userID: String?
+    private var userID: String? { request.progressUserID }
     private var transition = PlaybackTransitionGate()
     private var metadata: PlexMetadata
     private var sessionID = UUID().uuidString
@@ -86,7 +96,6 @@ final class VideoPlaybackController: ObservableObject, VideoQueueing {
     var handOff: ((_ next: VideoPlayRequest, _ rest: [VideoPlayRequest]) -> Void)?
 
     init(request: VideoPlayRequest, upNext: [VideoPlayRequest] = []) {
-        self.userID = DownloadManager.shared.activeUserID
         self.request = request
         self.upNext = upNext
         self.metadata = request.item
@@ -213,8 +222,8 @@ final class VideoPlaybackController: ObservableObject, VideoQueueing {
                     try? await api.selectStreams(partID: partID, audioStreamID: change.audioStreamID, subtitleStreamID: change.subtitleStreamID)
                     let fresh = (try? await LibraryCache.$requireFresh.withValue(true) { try await api.metadata(r.item.ratingKey) }) ?? nil
                     guard !stopped, request.id == r.id else { return }
-                    if let fresh { metadata = fresh }
-                    startStreaming(fresh ?? r.item, api: api)
+                    if let fresh { metadata = fresh.usingPlaybackVersion(of: r.item) }
+                    startStreaming(fresh?.usingPlaybackVersion(of: r.item) ?? r.item, api: api)
                 }
             } else {
                 startStreaming(r.item, api: api)
@@ -227,7 +236,7 @@ final class VideoPlaybackController: ObservableObject, VideoQueueing {
         Task { [ratingKey = r.item.ratingKey] in
             if let api, request.localURL == nil || NetworkMonitor.shared.isConnected,
                let fresh = try? await api.metadata(ratingKey), request.item.ratingKey == ratingKey {
-                metadata = fresh
+                metadata = fresh.usingPlaybackVersion(of: request.item)
                 chapters = fresh.chapters
             }
             guard request.item.ratingKey == ratingKey else { return }
@@ -619,7 +628,7 @@ final class VideoPlaybackController: ObservableObject, VideoQueueing {
             try? await Task.sleep(for: .seconds(1.5))
             guard let fresh = try? await api.metadata(metadata.ratingKey) else { continue }
             if let added = fresh.primaryPart?.subtitleStreams.first(where: { !before.contains($0.id) }) {
-                metadata = fresh
+                metadata = fresh.usingPlaybackVersion(of: request.item)
                 rebuildSubtitleOptions()
                 if let option = subtitleOptions.first(where: { $0.id == "sidecar-\(added.id)" || $0.id == "burn-\(added.id)" }) {
                     await selectSubtitle(option)

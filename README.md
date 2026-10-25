@@ -142,3 +142,30 @@ xcodebuild test -project LotsOfMedia.xcodeproj -scheme LotsOfMedia -destination 
 ## Apple TV
 
 The `LotsOfMediaTV` target is the same app on Apple TV (one purchase covers both with Universal Purchase): Home with Continue Watching and a Top Shelf, Library with sort, filters, collections, playlists and photos, detail pages with trailers, extras and cast pages, Live TV with a guide and a playing window, music with a saved, editable queue, Up Next, a sleep timer, Plex Home profiles, and the built-in player (TVVLCKit). Top Shelf links carry their server, so they never open another server's item.
+
+## Platform and provider capabilities
+
+| Capability | iPhone / iPad | Apple TV | Roku |
+| --- | --- | --- | --- |
+| Plex and Jellyfin library streaming | Yes | Yes | Yes |
+| Plex Live TV / DVR | Requires server tuner/DVR | Requires server tuner/DVR | Requires server tuner/DVR |
+| Jellyfin Live TV | Not currently supported | Not currently supported | Not currently supported |
+| Offline downloads | Yes | No | No |
+| Smaller converted downloads | Plex; Jellyfin keeps originals | — | — |
+| Plex Home profiles | Yes | Yes | Yes |
+
+Codecs, subtitles, extras and skip markers depend on device and server capabilities.
+
+### Reproducible Apple TV live playback test
+
+Run `python3 tools/live_seek_fixture.py` (requires ffmpeg). In another terminal, run the
+`LivePlayPauseUITests/testPlayPausePresses` test in the `LotsOfMediaTVUITests` scheme with
+`TEST_RUNNER_LIVE_URL=http://127.0.0.1:18765/window/live.m3u8` in the environment, and repeat
+with `/event/live.m3u8`. It presses Play/Pause and Select full screen; with `-tvLiveDiagnostics`
+the app logs each press and pause to `Caches/live-state.log` in its simulator container.
+Without a fixture URL, this integration test skips. Restart the fixture before repeating a long
+run; its generated stream contains three minutes.
+
+Physical Apple TV testing is still needed for Siri Remote touch-ring scrubbing and real Plex tuners.
+Live-state diagnostics are opt-in with the `-tvLiveDiagnostics` debug launch argument; logs rotate
+at 1 MB. They are not included in release builds.

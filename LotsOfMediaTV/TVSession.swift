@@ -22,7 +22,10 @@ final class TVSession {
     /// Bumped after playback or watch-state changes so pages reload.
     var contentVersion = 0
     var selectedServerID: String? = UserDefaults.standard.string(forKey: "selectedServerID") {
-        didSet { UserDefaults.standard.set(selectedServerID, forKey: "selectedServerID") }
+        didSet {
+            UserDefaults.standard.set(selectedServerID, forKey: "selectedServerID")
+            MediaVersionChoice.serverID = selectedServerID ?? ""
+        }
     }
 
     /// Signed in to Plex, or to at least one Jellyfin server.

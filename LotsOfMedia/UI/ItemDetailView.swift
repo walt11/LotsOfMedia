@@ -1371,7 +1371,7 @@ struct DownloadPreviewView: View {
             Form {
                 Section(item.title) {
                     Picker("Quality", selection: $quality) {
-                        ForEach(DownloadQuality.choices(for: source)) { Text($0.label).tag($0) }
+                        ForEach(isJellyfin ? [DownloadQuality.original] : DownloadQuality.choices(for: source)) { Text($0.label).tag($0) }
                     }
                     if [.show, .season].contains(item.kind) {
                         Toggle("Unwatched Only", isOn: $unwatchedOnly)
@@ -1382,7 +1382,10 @@ struct DownloadPreviewView: View {
                     } else { LabeledContent("File size", value: DownloadEstimate.sizeLabel(item: source, quality: quality)) }
                     if let available = DownloadStore.availableCapacity() { LabeledContent("Available on device", value: Fmt.bytes(available)) }
                     if !isMusic { LabeledContent("Subtitles", value: subtitleSummary) }
-                    if !isMusic { Text(quality.detail).font(.caption).foregroundStyle(.secondary) }
+                    if isJellyfin {
+                        Text("Jellyfin downloads keep the original file. Smaller converted downloads are available with Plex.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else if !isMusic { Text(quality.detail).font(.caption).foregroundStyle(.secondary) }
                     if !item.isLeaf {
                         Text(isMusic ? "Downloads every song." : unwatchedOnly ? "Downloads unwatched items in this group." : "Downloads all playable items in this group.")
                             .font(.caption)
@@ -1409,6 +1412,7 @@ struct DownloadPreviewView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
             .task {
+                if isJellyfin { quality = .original }
                 guard let api = app.api, app.isOnline else { return }
                 loading = true
                 defer { loading = false }
@@ -1423,6 +1427,7 @@ struct DownloadPreviewView: View {
         }
     }
 
+    private var isJellyfin: Bool { app.selectedServerID.map { ServerDirectory.shared.server(id: $0)?.isJellyfin == true } ?? false }
     private var isMusic: Bool { [.track, .album, .artist].contains(item.kind) }
 
     private var subtitleSummary: String {

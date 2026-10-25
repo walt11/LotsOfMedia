@@ -82,7 +82,7 @@ final class BuiltInPlaybackController: NSObject, ObservableObject, VLCMediaPlaye
     /// Called when the last item ends (the screen closes).
     var onFinished: (() -> Void)?
 
-    private let userID: String?
+    private var userID: String? { request.progressUserID }
     private var api: PlexServerAPI?
     private var sessionID = UUID().uuidString
     private var markers: [PlexMarker] = []
@@ -96,7 +96,6 @@ final class BuiltInPlaybackController: NSObject, ObservableObject, VLCMediaPlaye
     init(request: VideoPlayRequest, upNext: [VideoPlayRequest] = []) {
         self.request = request
         self.upNext = upNext
-        self.userID = DownloadManager.shared.activeUserID
         self.api = ServerDirectory.shared.api(for: request.serverID)
         super.init()
     }

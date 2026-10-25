@@ -434,6 +434,25 @@ struct PlexMedia: Codable, Hashable {
 }
 
 struct PlexMetadata: Codable, Hashable, Identifiable {
+    // Request-local context; excluded from server/cache coding keys.
+    var playbackMediaID: Int? = nil
+    var playbackServerID: String? = nil
+
+    func forPlayback(serverID: String) -> PlexMetadata {
+        var copy = self
+        copy.playbackServerID = serverID
+        if copy.playbackMediaID == nil, !media.isEmpty {
+            copy.playbackMediaID = media[primaryMediaIndex(serverID: serverID)].id
+        }
+        return copy
+    }
+
+    func usingPlaybackVersion(of original: PlexMetadata) -> PlexMetadata {
+        var copy = self
+        copy.playbackMediaID = original.playbackMediaID
+        copy.playbackServerID = original.playbackServerID
+        return copy
+    }
     var ratingKey: String
     var key: String?
     var guid: String?
@@ -697,13 +716,19 @@ extension PlexMetadata {
     var primaryPart: PlexPart? { primaryMedia?.parts.first }
     /// Position of `primaryMedia` among the item's versions (the server's `mediaIndex`).
     var primaryMediaIndex: Int {
-        guard media.count > 1, let id = MediaVersionChoice.mediaID(for: ratingKey) else { return 0 }
+        if let playbackMediaID, let index = media.firstIndex(where: { $0.id == playbackMediaID }) { return index }
+        return primaryMediaIndex(serverID: playbackServerID ?? MediaVersionChoice.serverID)
+    }
+
+    func primaryMediaIndex(serverID: String) -> Int {
+        guard media.count > 1, let id = MediaVersionChoice.mediaID(for: ratingKey, serverID: serverID) else { return 0 }
         return media.firstIndex { $0.id == id } ?? 0
     }
 }
 
 /// Which version of a title (4K or 1080p, a director's cut…) plays and downloads, chosen on
-/// its page. Remembered per title; a version that's gone from the server falls back to the first.
+/// its page. Remembered per title on each server (rating keys are only unique within a server);
+/// a version that's gone from the server falls back to the first.
 @Observable
 final class MediaVersionChoice: @unchecked Sendable {
     static let shared = MediaVersionChoice()
@@ -711,14 +736,26 @@ final class MediaVersionChoice: @unchecked Sendable {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var choices: [String: Int] =
         UserDefaults.standard.dictionary(forKey: key) as? [String: Int] ?? [:]
+    /// The server being browsed: choices are kept per server.
+    nonisolated(unsafe) private static var _serverID = UserDefaults.standard.string(forKey: "selectedServerID") ?? ""
+    static var serverID: String {
+        get { lock.withLock { _serverID } }
+        set { lock.withLock { _serverID = newValue } }
+    }
     /// Read by views so they redraw when a choice changes.
     private(set) var revision = 0
 
-    static func mediaID(for ratingKey: String) -> Int? { lock.withLock { choices[ratingKey] } }
+    private static func scoped(_ ratingKey: String) -> String { _serverID + "|" + ratingKey }
+
+    /// Legacy unscoped choices cannot safely be assigned to a server.
+    static func mediaID(for ratingKey: String, serverID: String? = nil) -> Int? {
+        lock.withLock { choices[(serverID ?? _serverID) + "|" + ratingKey] }
+    }
 
     func choose(_ media: PlexMedia, of item: PlexMetadata) {
         Self.lock.withLock {
-            Self.choices[item.ratingKey] = media.id == item.media.first?.id ? nil : media.id
+            Self.choices[item.ratingKey] = nil
+            Self.choices[Self.scoped(item.ratingKey)] = media.id == item.media.first?.id ? nil : media.id
             UserDefaults.standard.set(Self.choices, forKey: Self.key)
         }
         revision += 1

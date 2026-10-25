@@ -141,13 +141,31 @@ struct DownloadRecord: Codable, Identifiable, Hashable {
     /// they're announced once, when the whole group has finished.
     var batchID: String?
     var batchTitle: String?
+    /// The version chosen when it was queued (an item with several), so changing the choice later
+    /// doesn't change what downloads.
+    var mediaID: Int?
 
     /// Independent progress for each profile; the legacy fields above are migrated on load.
     var userProgress: [String: OfflineProgress]?
 
     static func progressKey(_ userID: String?) -> String { userID.map { "user:" + $0 } ?? "anonymous" }
+    /// Whose progress this is: on a Jellyfin server, the Jellyfin user signed in to it (not the Plex
+    /// profile, which another Jellyfin login on the same server would share), else the Plex profile.
+    static func playbackUserID(serverID: String, plexUserID: String?) -> String? {
+        guard let server = ServerDirectory.shared.server(id: serverID), server.isJellyfin else { return plexUserID }
+        return "jellyfin:" + (server.jellyfinUserID ?? "unknown")
+    }
+
+    func ownerKey(_ userID: String?) -> String {
+        // Playback captures this identity before credentials can change.
+        if let userID, userID.hasPrefix("jellyfin:") { return userID }
+        if serverID.hasPrefix(JellyfinBridge.idPrefix) {
+            return "jellyfin:" + (ServerDirectory.shared.server(id: serverID)?.jellyfinUserID ?? "unknown")
+        }
+        return Self.progressKey(userID)
+    }
     var hasPendingProgress: Bool { pendingSync || userProgress?.values.contains(where: \.pending) == true }
-    func progress(for userID: String?) -> OfflineProgress? { userProgress?[Self.progressKey(userID)] }
+    func progress(for userID: String?) -> OfflineProgress? { userProgress?[ownerKey(userID)] }
 
     func resumeOffset(for userID: String?, serverOffset: Int?) -> Int {
         if let progress = progress(for: userID), progress.pending { return progress.offset }
@@ -171,13 +189,29 @@ struct DownloadRecord: Codable, Identifiable, Hashable {
         migrateProgress()
         let watched = durationMs.map { $0 > 0 && Double(positionMs) / Double($0) > 0.9 } ?? false
         if userProgress == nil { userProgress = [:] }
-        userProgress?[Self.progressKey(userID)] = OfflineProgress(offset: watched ? 0 : positionMs, watched: watched, pending: true)
+        let key = ownerKey(userID)
+        userProgress?[key] = OfflineProgress(offset: watched ? 0 : positionMs, watched: watched, pending: true)
     }
 
     mutating func acknowledgeProgress(userID: String?, revision: UUID) {
-        let key = Self.progressKey(userID)
+        acknowledgeProgress(ownerKey: ownerKey(userID), revision: revision)
+    }
+
+    mutating func acknowledgeProgress(ownerKey key: String, revision: UUID) {
         guard userProgress?[key]?.revision == revision else { return }
         userProgress?[key]?.pending = false
+    }
+
+    var playbackMetadata: PlexMetadata {
+        var item = metadata
+        item.playbackMediaID = mediaID
+        item.playbackServerID = serverID
+        return item
+    }
+
+    var downloadedVersionLabel: String {
+        let version = mediaID.flatMap { id in metadata.media.first { $0.id == id } }
+        return [version?.videoResolution, quality.label].compactMap { $0 }.joined(separator: " · ")
     }
 
     func requiresConversion(media: PlexMedia, kind: PlexMetadata.Kind, quality: DownloadQuality) -> Bool {

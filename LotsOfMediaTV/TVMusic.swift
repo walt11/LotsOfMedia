@@ -61,9 +61,29 @@ final class TVMusicPlayer {
             MainActor.assumeIsolated { self?.tick() }
         }
         let center = MPRemoteCommandCenter.shared()
-        center.playCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.resume() }; return .success }
-        center.pauseCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.pause() }; return .success }
-        center.togglePlayPauseCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.toggle() }; return .success }
+        // Once these are registered, tvOS sends the remote's Play/Pause button here rather than to
+        // the player on screen; while a live channel plays, they're its.
+        center.playCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated { if let live = TVLiveNow.shared.player, TVLiveNow.shared.channel != nil { live.play() } else { self?.resume() } }
+            return .success
+        }
+        center.pauseCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated { if let live = TVLiveNow.shared.player, TVLiveNow.shared.channel != nil { live.pause() } else { self?.pause() } }
+            return .success
+        }
+        center.togglePlayPauseCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated {
+                let now = TVLiveNow.shared
+                if let live = now.player, now.channel != nil {
+                    // In the corner window, Play/Pause returns to the channel full screen.
+                    _ = live
+                    if !now.isFullScreen { now.isFullScreen = true } else { now.togglePause() }
+                } else {
+                    self?.toggle()
+                }
+            }
+            return .success
+        }
         center.nextTrackCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.next() }; return .success }
         center.previousTrackCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.previous() }; return .success }
         center.changePlaybackPositionCommand.addTarget { [weak self] e in
