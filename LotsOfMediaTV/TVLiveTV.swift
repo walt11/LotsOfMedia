@@ -98,6 +98,9 @@ struct TVLiveTVView: View {
         .onExitCommand(perform: focusWindowOnBack)
         // Play/Pause on the remote returns to the playing channel.
         .onPlayPauseCommand {
+            #if DEBUG
+            TVLivePlaybackController.debugLog("page onPlayPauseCommand full=\(now.isFullScreen)")
+            #endif
             guard now.channel != nil else { return }
             if now.isFullScreen { now.togglePause() } else { now.isFullScreen = true }
         }
@@ -878,7 +881,13 @@ struct TVLiveMiniGuide: View {
 final class TVLiveNow {
     static let shared = TVLiveNow()
     private(set) var channel: LiveChannel?
-    var isFullScreen = false
+    var isFullScreen = false {
+        didSet {
+            #if DEBUG
+            if oldValue != isFullScreen { TVLivePlaybackController.debugLog("isFullScreen=\(isFullScreen)") }
+            #endif
+        }
+    }
     @ObservationIgnored private(set) var controller: TVLivePlaybackController?
     var player: AVPlayer? { controller?.player }
     @ObservationIgnored private var foregroundObserver: NSObjectProtocol?
@@ -891,10 +900,11 @@ final class TVLiveNow {
     /// When playback last paused or played, so a press handled one way isn't handled again another.
     @ObservationIgnored private var lastRateChange = Date.distantPast
     @ObservationIgnored private var rateObservation: NSKeyValueObservation?
-    /// The channel's own Now Playing session: tvOS sends the remote's Play/Pause button as a command
-    /// to the active session, and without one of its own the channel's press went elsewhere (the
-    /// music player's commands, or Apple's player, which does nothing with it on a live stream).
+    /// On a live stream tvOS sends the remote's Play/Pause as a media command, not a press: these
+    /// take it while a channel plays (the shared command center, and the channel's own Now Playing
+    /// session, whichever tvOS uses), and are removed when it stops.
     @ObservationIgnored private var nowPlaying: MPNowPlayingSession?
+    @ObservationIgnored private var commandsRegistered = false
 
     private init() {
         // Away at the Home Screen, the app stops keeping the server's live session alive and the
@@ -932,6 +942,9 @@ final class TVLiveNow {
 
     /// The screen saver is coming over the app: the corner window pauses (full screen plays on).
     func appWillResignActive(at date: Date = Date()) {
+        #if DEBUG
+        TVLivePlaybackController.debugLog("app will resign active")
+        #endif
         guard let controller, !isFullScreen else { return }
         controller.player.pause()
         pausedInactive = date
@@ -939,6 +952,9 @@ final class TVLiveNow {
 
     /// Back from the screen saver: a quick look away picks up again; after longer the channel closes.
     func appDidBecomeActive(at date: Date = Date()) {
+        #if DEBUG
+        TVLivePlaybackController.debugLog("app did become active")
+        #endif
         guard let paused = pausedInactive else { return }
         pausedInactive = nil
         guard let controller else { return }
@@ -956,11 +972,15 @@ final class TVLiveNow {
             let c = TVLivePlaybackController(channel: channel, session: session) { [weak self] in self?.stop() }
             c.onChannelChange = { [weak self] in self?.channel = $0 }
             controller = c
-            rateObservation = c.player.observe(\.rate) { [weak self] _, _ in
+            rateObservation = c.player.observe(\.rate) { [weak self] player, _ in
+                #if DEBUG
+                TVLivePlaybackController.debugLog("rate=\(player.rate)")
+                #endif
                 DispatchQueue.main.async { MainActor.assumeIsolated { self?.lastRateChange = Date() } }
             }
-            startNowPlaying(c.player)
             c.start()
+            // After start(): it has the music step aside, which clears the shared commands.
+            registerCommands(for: c.player)
         }
         self.channel = channel
         isFullScreen = true
@@ -984,29 +1004,42 @@ final class TVLiveNow {
         }
     }
 
-    private func startNowPlaying(_ player: AVPlayer) {
+    private func registerCommands(for player: AVPlayer) {
         let session = MPNowPlayingSession(players: [player])
         session.automaticallyPublishesNowPlayingInfo = true
-        let commands = session.remoteCommandCenter
-        commands.togglePlayPauseCommand.addTarget { [weak self] _ in
-            MainActor.assumeIsolated {
-                #if DEBUG
-                TVLivePlaybackController.debugLog("remote command togglePlayPause")
-                #endif
-                guard let self, self.channel != nil else { return }
-                // In the corner window, Play/Pause returns to the channel full screen.
-                if self.isFullScreen { self.togglePause() } else { self.isFullScreen = true }
+        for center in [MPRemoteCommandCenter.shared(), session.remoteCommandCenter] {
+            for command in [center.togglePlayPauseCommand, center.playCommand, center.pauseCommand] {
+                command.addTarget { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        #if DEBUG
+                        TVLivePlaybackController.debugLog("live command \(center === session.remoteCommandCenter ? "session" : "shared")")
+                        #endif
+                        guard let self, self.channel != nil else { return }
+                        // In the corner window, Play/Pause returns to the channel full screen.
+                        if self.isFullScreen { self.togglePause() } else { self.isFullScreen = true }
+                    }
+                    return .success
+                }
             }
-            return .success
         }
-        commands.playCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.player?.play() }; return .success }
-        commands.pauseCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.player?.pause() }; return .success }
         session.becomeActiveIfPossible { _ in }
         nowPlaying = session
+        commandsRegistered = true
+    }
+
+    private func unregisterCommands() {
+        guard commandsRegistered else { return }
+        commandsRegistered = false
+        let shared = MPRemoteCommandCenter.shared()
+        for command in [shared.togglePlayPauseCommand, shared.playCommand, shared.pauseCommand] { command.removeTarget(nil) }
+        nowPlaying = nil
     }
 
     func stop() {
-        nowPlaying = nil
+        #if DEBUG
+        TVLivePlaybackController.debugLog("TVLiveNow.stop")
+        #endif
+        unregisterCommands()
         rateObservation = nil
         pausedInactive = nil
         controller?.stop()
@@ -1326,7 +1359,7 @@ final class TVLivePlaybackController: NSObject {
     }
 
     func start() {
-        TVMusicPlayer.shared.pause()
+        TVMusicPlayer.shared.yieldToVideo()
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 1), queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
@@ -1567,5 +1600,3 @@ final class TVLivePlaybackController: NSObject {
         viewController?.present(alert, animated: true)
     }
 }
-
-

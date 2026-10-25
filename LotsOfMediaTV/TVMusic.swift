@@ -60,30 +60,19 @@ final class TVMusicPlayer {
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 1), queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
+        registerCommands()
+    }
+
+    /// The remote's Play/Pause and the system's Now Playing controls for the music. While the app has
+    /// these, tvOS sends the remote's Play/Pause here rather than to a video on screen, so they're
+    /// only registered while music is what's playing.
+    private func registerCommands() {
+        guard !commandsRegistered else { return }
+        commandsRegistered = true
         let center = MPRemoteCommandCenter.shared()
-        // Once these are registered, tvOS sends the remote's Play/Pause button here rather than to
-        // the player on screen; while a live channel plays, they're its.
-        center.playCommand.addTarget { [weak self] _ in
-            MainActor.assumeIsolated { if let live = TVLiveNow.shared.player, TVLiveNow.shared.channel != nil { live.play() } else { self?.resume() } }
-            return .success
-        }
-        center.pauseCommand.addTarget { [weak self] _ in
-            MainActor.assumeIsolated { if let live = TVLiveNow.shared.player, TVLiveNow.shared.channel != nil { live.pause() } else { self?.pause() } }
-            return .success
-        }
-        center.togglePlayPauseCommand.addTarget { [weak self] _ in
-            MainActor.assumeIsolated {
-                let now = TVLiveNow.shared
-                if let live = now.player, now.channel != nil {
-                    // In the corner window, Play/Pause returns to the channel full screen.
-                    _ = live
-                    if !now.isFullScreen { now.isFullScreen = true } else { now.togglePause() }
-                } else {
-                    self?.toggle()
-                }
-            }
-            return .success
-        }
+        center.playCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.resume() }; return .success }
+        center.pauseCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.pause() }; return .success }
+        center.togglePlayPauseCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.toggle() }; return .success }
         center.nextTrackCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.next() }; return .success }
         center.previousTrackCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.previous() }; return .success }
         center.changePlaybackPositionCommand.addTarget { [weak self] e in
@@ -93,10 +82,43 @@ final class TVMusicPlayer {
         }
     }
 
+    private func unregisterCommands() {
+        guard commandsRegistered else { return }
+        commandsRegistered = false
+        let center = MPRemoteCommandCenter.shared()
+        for command in [center.playCommand, center.pauseCommand, center.togglePlayPauseCommand, center.nextTrackCommand,
+                        center.previousTrackCommand, center.changePlaybackPositionCommand] {
+            command.removeTarget(nil)
+        }
+    }
+
+    /// Set while a video plays: the music's Now Playing entry and remote commands are out of the way.
+    @ObservationIgnored private var yielded = false
+    @ObservationIgnored private var commandsRegistered = false
+
+    /// A video is starting: the music pauses and gives up Now Playing. Otherwise tvOS reads the
+    /// remote's Play/Pause against the paused song (it sends "play" to the app, which is already
+    /// playing the video) and the video never gets the button.
+    func yieldToVideo() {
+        if isPlaying { pause() }
+        yielded = true
+        unregisterCommands()
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+    }
+
+    /// Music is playing again: it takes Now Playing and the remote's commands back.
+    private func reclaim() {
+        guard yielded else { return }
+        yielded = false
+        registerCommands()
+    }
+
     func play(_ tracks: [PlexMetadata], start: Int = 0, session: TVSession) {
         let playable = tracks.filter { $0.kind == .track }
         guard !playable.isEmpty else { return }
+        // Live TV first: stopping it clears the remote's commands, which the music then takes.
         TVLiveNow.shared.stop()
+        reclaim()
         self.session = session
         queue = playable
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
@@ -107,6 +129,7 @@ final class TVMusicPlayer {
     func pause() { player.pause(); isPlaying = false; report("paused"); updateNowPlaying(); saveQueue() }
     func resume() {
         guard current != nil else { return }
+        reclaim()
         // A restored queue loads its song on the first press of play.
         if player.currentItem == nil { load(index, startAtMs: pendingStartMs); pendingStartMs = nil; return }
         player.play(); isPlaying = true; updateNowPlaying()
@@ -413,6 +436,8 @@ final class TVMusicPlayer {
     }
 
     private func updateNowPlaying() {
+        // A video has Now Playing.
+        if yielded { return }
         guard let item = current else { MPNowPlayingInfoCenter.default().nowPlayingInfo = nil; return }
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: item.title,

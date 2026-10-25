@@ -65,7 +65,7 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
     }
 
     func start(drawable: UIView) {
-        TVMusicPlayer.shared.pause()
+        TVMusicPlayer.shared.yieldToVideo()
         TVLiveNow.shared.stop()
         mediaPlayer.drawable = drawable
         self.drawable = drawable

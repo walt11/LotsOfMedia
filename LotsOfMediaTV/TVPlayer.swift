@@ -137,7 +137,7 @@ final class TVPlaybackController: NSObject {
     }
 
     func start() {
-        TVMusicPlayer.shared.pause()
+        TVMusicPlayer.shared.yieldToVideo()
         TVLiveNow.shared.stop()
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 1), queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
