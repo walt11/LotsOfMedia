@@ -1071,7 +1071,7 @@ private struct TVLiveFullScreenRepresentable: UIViewControllerRepresentable {
 
 /// Retains readable seek status over live video. A fallback handles the dedicated Play/Pause
 /// button when AVKit does not act; Select remains owned by AVKit's focused controls.
-private final class TVLivePlayerViewController: AVPlayerViewController, UIGestureRecognizerDelegate {
+private final class TVLivePlayerViewController: TVFocusedPlayerViewController, UIGestureRecognizerDelegate {
     /// Beginning of the current dedicated remote-button press.
     private var pressStarted = Date.distantPast
 

@@ -66,7 +66,7 @@ private struct TVPlayerRepresentable: UIViewControllerRepresentable {
     }
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
-        let vc = AVPlayerViewController()
+        let vc = TVFocusedPlayerViewController()
         // Leaving the player stops playback, so a Picture in Picture window would just freeze.
         vc.allowsPictureInPicturePlayback = false
         vc.player = context.coordinator.player

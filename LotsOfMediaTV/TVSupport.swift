@@ -1,3 +1,4 @@
+import AVKit
 import SwiftUI
 import UIKit
 
@@ -135,5 +136,24 @@ extension View {
         onPlayPauseCommand {
             if item.isPlayableVideo { TVQuickPlay.shared.request = TVPlayRequest(item: item, resume: true) }
         }
+    }
+}
+
+/// Apple's player, taking focus as soon as it's on screen. Shown from SwiftUI, it otherwise has none
+/// until the first Select: the remote's Play/Pause then reaches nothing, so it only worked after
+/// the center button had been pressed once.
+class TVFocusedPlayerViewController: AVPlayerViewController {
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        takeFocus()
+        // Once more after the presentation settles (SwiftUI may move focus as it finishes).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.takeFocus() }
+    }
+
+    private func takeFocus() {
+        guard let system = UIFocusSystem.focusSystem(for: view) else { return }
+        if let focused = system.focusedItem as? UIView, focused.isDescendant(of: view) { return }
+        system.requestFocusUpdate(to: self)
+        system.updateFocusIfNeeded()
     }
 }
