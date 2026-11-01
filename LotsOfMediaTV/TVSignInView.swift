@@ -13,7 +13,7 @@ struct TVSignInView: View {
     var body: some View {
         HStack(spacing: 120) {
             VStack(alignment: .leading, spacing: 28) {
-                Text("LotsOfMedia").font(.system(size: 76, weight: .heavy).width(.compressed))
+                Text("LotsOfMedia").font(TVTheme.title(64))
                 Text("Your Plex movies, shows and music.").font(.title3).foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 14) {
                     step(1, "On your phone or computer, go to **plex.tv/link**")
@@ -128,7 +128,7 @@ struct TVJellyfinSignInView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 30) {
-            Text("Jellyfin").font(.system(size: 76, weight: .heavy).width(.compressed))
+            Text("Jellyfin").font(TVTheme.title(64))
             if let server {
                 Text("\(server.name) · Jellyfin \(server.version)").font(.title3).foregroundStyle(.secondary)
                 HStack(alignment: .top, spacing: 80) {
@@ -232,7 +232,7 @@ struct TVAddPlexServerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 30) {
-            Text("Add Plex Server").font(.system(size: 76, weight: .heavy).width(.compressed))
+            Text("Add Plex Server").font(TVTheme.title(64))
             if session.token == nil {
                 Text("Sign in to Plex to see the servers on your account.").font(.title3).foregroundStyle(.secondary)
                 Button("Sign In to Plex") { signingIn = true }.buttonStyle(TVActionStyle())

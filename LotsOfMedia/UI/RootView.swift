@@ -281,6 +281,7 @@ struct SignInView: View {
 
     var body: some View {
         NavigationStack {
+            ScrollView {
             VStack(spacing: 28) {
                 Spacer()
                 VStack(spacing: 12) {
@@ -288,7 +289,7 @@ struct SignInView: View {
                         .font(.system(size: 72))
                         .foregroundStyle(Cinema.accent)
                     Text("LotsOfMedia").font(.largeTitle.bold())
-                    Text("Stream and download from your Plex servers, at home or away.")
+                    Text("Your movies, shows and music. Connect Plex or Jellyfin to make yourself at home.")
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 32)
@@ -354,8 +355,14 @@ struct SignInView: View {
                 if let error {
                     Text(error).font(.footnote).foregroundStyle(.red).multilineTextAlignment(.center).padding(.horizontal)
                 }
-                Spacer()
+                Spacer(minLength: 24)
             }
+            .frame(maxWidth: 480)
+            .padding(.top, 48)
+            .padding(.bottom, 24)
+            .frame(maxWidth: .infinity)
+            }
+            .background(Cinema.background)
             .sheet(isPresented: $showManual) { ManualServerView() }
             .sheet(isPresented: $showJellyfin) { JellyfinSignInView() }
         }

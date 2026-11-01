@@ -10,6 +10,14 @@ struct TVSearchView: View {
     var body: some View {
         TVPageScrollView {
             LazyVStack(alignment: .leading, spacing: 50) {
+                if query.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Find your next favorite").font(TVTheme.title(44))
+                        Text("Search movies, shows, artists and albums in your library.")
+                            .font(.callout).foregroundStyle(TVTheme.secondary)
+                    }.padding(.horizontal, 80)
+                }
+                if searching { ProgressView("Searching your library…").padding(.horizontal, 80) }
                 ForEach(hubs) { hub in
                     TVRow(title: hub.title) {
                         ForEach(hub.metadata) { item in

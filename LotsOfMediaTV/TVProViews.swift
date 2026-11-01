@@ -17,7 +17,7 @@ struct ProPaywallView: View {
         HStack(alignment: .top, spacing: 100) {
             VStack(alignment: .leading, spacing: 24) {
                 Image(systemName: "sparkles").font(.system(size: 70)).foregroundStyle(TVTheme.accent)
-                Text("LotsOfMedia Pro").font(.system(size: 72, weight: .heavy).width(.compressed))
+                Text("LotsOfMedia Pro").font(TVTheme.title(64))
                 Text(feature.map { "Unlock \($0.title) and everything below with one purchase, for good." }
                      ?? "One purchase unlocks everything below, for good.")
                     .font(.title3).foregroundStyle(.secondary)

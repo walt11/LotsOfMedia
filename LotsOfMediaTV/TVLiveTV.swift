@@ -774,7 +774,7 @@ struct TVAiringDetail: View {
                 .frame(width: 340, height: 510)
                 .clipShape(RoundedRectangle(cornerRadius: 18))
             VStack(alignment: .leading, spacing: 20) {
-                Text(airing.showTitle).font(.system(size: 54, weight: .heavy).width(.compressed))
+                Text(airing.showTitle).font(TVTheme.title(54))
                 Text([airing.episodeLine, airing.channelTitle, airing.timeRange].compactMap { $0 }.joined(separator: " · "))
                     .foregroundStyle(.secondary)
                 if let summary = airing.summary { Text(summary).font(.callout).lineLimit(6) }
@@ -1216,7 +1216,7 @@ struct TVLiveHero: View {
                             .font(.caption.weight(.bold)).tracking(1.5).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Text(airing.showTitle)
-                        .font(.system(size: 60, weight: .heavy).width(.compressed))
+                        .font(TVTheme.title(60))
                         .lineLimit(1).minimumScaleFactor(0.6)
                         .accessibilityIdentifier("live-spotlight")
                     HStack(spacing: 14) {
@@ -1252,7 +1252,7 @@ struct TVLiveHero: View {
             .animation(.easeOut(duration: 0.2), value: airing.id)
         } else {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Live TV").font(.system(size: 60, weight: .heavy).width(.compressed))
+                Text("Live TV").font(TVTheme.title(60))
                 Text("Pick a channel to start watching. It keeps playing here while you browse.")
                     .font(.callout).foregroundStyle(.secondary)
             }

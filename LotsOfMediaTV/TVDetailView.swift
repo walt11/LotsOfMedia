@@ -95,7 +95,7 @@ struct TVDetailView: View {
                 if shown.kind == .album, let artist = shown.parentTitle {
                     Text(artist).font(.title3).foregroundStyle(.secondary)
                 }
-                Text(shown.title).font(.system(size: 64, weight: .heavy).width(.compressed)).lineLimit(2)
+                Text(shown.title).font(TVTheme.title(64)).lineLimit(2)
                 HStack(spacing: 14) {
                     let meta = shown.tvMetaLine
                     if !meta.isEmpty { Text(meta).font(.callout).foregroundStyle(.secondary) }
@@ -513,7 +513,7 @@ struct TVPersonView: View {
                     TVImage(path: person.tag.thumb, width: 400, height: 400, placeholderIcon: "person.fill")
                         .frame(width: 200, height: 200).clipShape(Circle())
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(person.tag.tag).font(.system(size: 64, weight: .heavy).width(.compressed))
+                        Text(person.tag.tag).font(TVTheme.title(64))
                         Text(loading ? "Looking through your libraries…" : "\(items.count) title\(items.count == 1 ? "" : "s") in your libraries")
                             .foregroundStyle(.secondary)
                     }

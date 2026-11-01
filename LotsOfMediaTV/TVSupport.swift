@@ -4,7 +4,7 @@ import UIKit
 
 // MARK: - Look
 
-/// The TV app uses the iPhone app's Blue theme: near-black ground, cyan accent.
+/// Shared slate surfaces with white TV focus and readable secondary text.
 enum TVTheme {
     /// White on Apple TV, like its buttons (iPhone and iPad use green).
     static var accent: Color { .white }
@@ -12,9 +12,11 @@ enum TVTheme {
     static var surface: Color { AppTheme.surface }
     static var placeholder: Color { AppTheme.placeholder }
     static var muted: Color { AppTheme.muted }
+    static let secondary = Color.white.opacity(0.74)
+    static func title(_ size: CGFloat = 60) -> Font { .system(size: size, weight: .bold) }
 }
 
-/// Used by ProStore when it presents the unlock screen; the TV app is always dark and blue.
+/// Used by ProStore when it presents the unlock screen; the TV app is always dark with white focus.
 struct ThemeTint: ViewModifier {
     func body(content: Content) -> some View { content.tint(TVTheme.accent) }
 }

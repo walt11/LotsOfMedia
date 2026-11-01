@@ -61,7 +61,13 @@ struct LotsOfMediaApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            Group {
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("-designReview") { DesignReviewView() } else { RootView() }
+                #else
+                RootView()
+                #endif
+            }
                 .environment(app)
                 .environment(DownloadManager.shared)
                 .environment(AudioPlayer.shared)
@@ -70,7 +76,12 @@ struct LotsOfMediaApp: App {
                 .environment(ProStore.shared)
                 .preferredColorScheme(.dark)
                 .modifier(ThemeTint())
-                .task { await app.bootstrap() }
+                .task {
+                    #if DEBUG
+                    if ProcessInfo.processInfo.arguments.contains("-designReview") { return }
+                    #endif
+                    await app.bootstrap()
+                }
                 .onContinueUserActivity(ProStore.siriUnlockActivity) { _ in ProStore.presentPaywall(.siri) }
         }
         .commands { AppCommands(app: app) }

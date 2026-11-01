@@ -84,6 +84,7 @@ struct TVActionStyle: ButtonStyle {
 
     private struct Face: View {
         @Environment(\.isFocused) private var focused
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
         @Environment(\.isEnabled) private var enabled
         let configuration: Configuration
         let selected: Bool
@@ -100,10 +101,12 @@ struct TVActionStyle: ButtonStyle {
                 .foregroundStyle(focused ? Color.black : Color.white)
                 .background(focused ? Color.white : (selected ? Color.white.opacity(0.24) : TVTheme.surface),
                             in: RoundedRectangle(cornerRadius: compact ? 12 : 14, style: .continuous))
-                .scaleEffect(focused ? 1.05 : (configuration.isPressed ? 0.97 : 1))
+                .overlay(RoundedRectangle(cornerRadius: compact ? 12 : 14)
+                    .strokeBorder(focused ? .clear : AppTheme.border, lineWidth: 1))
+                .scaleEffect(reduceMotion ? 1 : (focused ? 1.04 : (configuration.isPressed ? 0.97 : 1)))
                 .shadow(color: .black.opacity(focused ? 0.45 : 0), radius: 16, y: 8)
                 .opacity(enabled ? 1 : 0.45)
-                .animation(.easeOut(duration: 0.15), value: focused)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: focused)
         }
     }
 }
@@ -113,6 +116,7 @@ struct TVActionStyle: ButtonStyle {
 /// Full-screen artwork of the spotlight item behind the page, dimmed so text stays readable,
 /// crossfading as focus moves.
 struct TVAmbientBackdrop: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var item: PlexMetadata?
     /// How much of the artwork shows (Home's top is brighter; other pages stay subtle).
     var strength: Double = 1
@@ -133,12 +137,13 @@ struct TVAmbientBackdrop: View {
                            startPoint: .leading, endPoint: .trailing)
         }
         .ignoresSafeArea()
-        .animation(.easeInOut(duration: 0.45), value: item?.ratingKey)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: item?.ratingKey)
     }
 }
 
 /// Home's spotlight: big title, details, quality and summary of the focused item.
 struct TVSpotlightHeader: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var item: PlexMetadata?
 
     var body: some View {
@@ -148,12 +153,12 @@ struct TVSpotlightHeader: View {
                     Text(show.uppercased()).font(.caption.weight(.bold)).tracking(2).foregroundStyle(TVTheme.accent)
                 }
                 Text(item.kind == .episode ? item.title : item.tvCardTitle)
-                    .font(.system(size: 66, weight: .heavy).width(.compressed))
+                    .font(TVTheme.title(64))
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
                 HStack(spacing: 14) {
                     let meta = item.tvMetaLine
-                    if !meta.isEmpty { Text(meta).font(.callout).foregroundStyle(.secondary) }
+                    if !meta.isEmpty { Text(meta).font(.callout).foregroundStyle(TVTheme.secondary) }
                     TVQualityChips(item: item)
                 }
                 if let summary = item.summary, !summary.isEmpty {
@@ -163,8 +168,8 @@ struct TVSpotlightHeader: View {
             }
         }
         .id(item?.ratingKey)
-        .transition(.opacity.combined(with: .move(edge: .bottom)))
-        .animation(.easeInOut(duration: 0.4), value: item?.ratingKey)
+        .transition(.opacity)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.4), value: item?.ratingKey)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

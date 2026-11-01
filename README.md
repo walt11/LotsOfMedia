@@ -169,3 +169,18 @@ run; its generated stream contains three minutes.
 Physical Apple TV testing is still needed for Siri Remote touch-ring scrubbing and real Plex tuners.
 Live-state diagnostics are opt-in with the `-tvLiveDiagnostics` debug launch argument; logs rotate
 at 1 MB. They are not included in release builds.
+
+
+### Visual review
+
+The apps share slate surfaces, consistent card edges and bold display typography. Phone/tablet
+controls use the icon's green; TV uses white focus. Secondary TV captions remain readable when
+unfocused. Tablet grids use larger posters, and custom TV focus animations respect Reduce Motion.
+
+For account-free component previews, generate temporary artwork with
+`swift tools/design_review_art.swift /tmp/lom-design-art`, then serve it with
+`python3 -m http.server 18766 --bind 127.0.0.1 --directory /tmp/lom-design-art`.
+Launch a Debug simulator build with `-designReview`. On iOS, add `-designMusic`,
+`-designLibrary`, or `-designEmpty` to inspect those layouts. These previews use the production
+card, title and empty-state components with synthetic data; they do not replace end-to-end screen testing.
+Preview routing and data are excluded from Release builds. No server login is needed.

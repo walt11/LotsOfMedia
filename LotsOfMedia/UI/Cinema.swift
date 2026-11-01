@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Shared look for the "Cinema" design: deep near-black ground, artwork-led
-/// pages, condensed display titles, glass controls and quality chips.
+/// pages, clear display titles, glass controls and quality chips.
 enum Cinema {
     /// Poster width in every grid: three columns on iPhone, filling their cells.
     static let gridPosterWidth: CGFloat = 108
@@ -17,9 +17,9 @@ enum Cinema {
     /// "Server is converting" state, kept distinct from the accent used for downloading.
     static let converting = AppTheme.converting
 
-    /// Condensed, heavy display face for titles over artwork.
+    /// Bold display face for titles over artwork.
     static func title(_ size: CGFloat) -> Font {
-        .system(size: size, weight: .heavy).width(.compressed)
+        .system(size: size, weight: .bold)
     }
 
     /// A dark, saturated version of an artwork color, used to tint a whole page.
@@ -107,7 +107,7 @@ struct ThemeTint: ViewModifier {
 
 struct GreenSwitch: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
-        Toggle(configuration).toggleStyle(.switch).tint(.green)
+        Toggle(configuration).toggleStyle(.switch).tint(Cinema.accent)
     }
 }
 
@@ -122,7 +122,7 @@ struct QualityChips: View {
             HStack(spacing: 5) {
                 ForEach(chips, id: \.self) { chip in
                     Text(chip)
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.caption2.weight(.semibold))
                         .tracking(0.4)
                         .padding(.horizontal, 6).padding(.vertical, 3)
                         .background(.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 5))
@@ -156,10 +156,10 @@ struct QualityChips: View {
 struct CinemaPlayButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 15, weight: .bold))
+            .font(.subheadline.weight(.semibold))
             .foregroundStyle(.black)
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .background(.white, in: RoundedRectangle(cornerRadius: 12))
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .background(.white, in: RoundedRectangle(cornerRadius: AppTheme.controlRadius))
             .opacity(configuration.isPressed ? 0.8 : 1)
     }
 }

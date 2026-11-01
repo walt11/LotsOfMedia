@@ -151,7 +151,7 @@ private struct PageTitleToolbar: ToolbarContent {
     let title: String
     private var label: some View {
         Text(title)
-            .font(.largeTitle.bold())
+            .font(.title.bold())
             .lineLimit(1)
             .frame(maxWidth: 240, alignment: .leading)
             .fixedSize(horizontal: true, vertical: true)
@@ -255,7 +255,7 @@ struct PosterCard: View {
     private var aspect: CGFloat { isSquare ? 1 : 1.5 }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 8) {
             PlexImage(path: item.kind == .episode ? item.thumb : item.posterThumb ?? item.thumb,
                       width: Int(width * 2.5), height: Int(width * aspect * 2.5),
                       placeholderIcon: placeholder)
@@ -265,11 +265,13 @@ struct PosterCard: View {
                 .overlay(alignment: .bottom) {
                     if let p = item.progress { ProgressOverlay(progress: p) }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: item.kind == .artist ? width / 2 : 6))
+                .clipShape(RoundedRectangle(cornerRadius: item.kind == .artist ? width / 2 : AppTheme.cardRadius))
+                .overlay(RoundedRectangle(cornerRadius: item.kind == .artist ? width / 2 : AppTheme.cardRadius)
+                    .strokeBorder(AppTheme.border, lineWidth: 0.5))
                 .zoomSource(item)
             Text(item.kind == .episode ? item.title : item.displayTitle)
-                .font(.caption.weight(.medium))
-                .lineLimit(1)
+                .font(.caption.weight(.semibold))
+                .lineLimit(2, reservesSpace: true)
             if let sub = item.kind == .episode ? item.subtitleLine.map({ _ in item.grandparentTitle ?? "" }) : item.subtitleLine {
                 Text(sub).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             }
@@ -344,7 +346,7 @@ struct HubRow: View {
     var moreRoute: Route?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 if let moreRoute {
                     NavigationLink(value: moreRoute) {
@@ -631,9 +633,16 @@ struct EmptyStateView: View {
     var message: String? = nil
     var body: some View {
         ContentUnavailableView {
-            Label(title, systemImage: systemImage)
+            VStack(spacing: 20) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 32, weight: .medium))
+                    .foregroundStyle(Cinema.accent)
+                    .frame(width: 80, height: 80)
+                    .background(Cinema.accent.opacity(0.09), in: RoundedRectangle(cornerRadius: 24))
+                Text(title).font(.title3.weight(.semibold)).accessibilityAddTraits(.isHeader)
+            }
         } description: {
-            if let message { Text(message) }
+            if let message { Text(message).font(.subheadline).frame(maxWidth: 380) }
         }
     }
 }
@@ -1303,3 +1312,67 @@ struct ConnectionNotice: View {
         }
     }
 }
+
+#if DEBUG
+/// Synthetic media for repeatable visual review; no account, library or credentials are changed.
+enum DesignReviewSamples {
+    static let items: [PlexMetadata] = (0..<8).compactMap { index in
+        let titles = ["Northern Light", "The Long Way Home", "After Hours", "Open Water", "A Quiet Place", "City Stories", "Coast to Coast", "The Last Journey"]
+        let item: [String: Any] = ["ratingKey": "design-\(index)", "title": titles[index], "type": "movie", "year": 2024 + index % 2,
+            "duration": 6_840_000, "viewOffset": index < 2 ? 1_800_000 : 0,
+            "thumb": "http://127.0.0.1:18766/cover\(index).png", "art": "http://127.0.0.1:18766/wide\(index).png",
+            "summary": "Extraordinary stories. Unexpected discoveries. Find something worth your evening."]
+        guard let data = try? JSONSerialization.data(withJSONObject: item) else { return nil }
+        return try? JSONDecoder().decode(PlexMetadata.self, from: data)
+    }
+    static var albums: [PlexMetadata] {
+        items.enumerated().map { index, original in
+            var item = original
+            item.type = "album"
+            item.parentTitle = ["The Midnight", "Coastal Radio", "Juniper", "Slow Motion"][index % 4]
+            return item
+        }
+    }
+}
+#endif
+
+#if DEBUG
+struct DesignReviewView: View {
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    private var music: Bool { ProcessInfo.processInfo.arguments.contains("-designMusic") }
+    private var library: Bool { ProcessInfo.processInfo.arguments.contains("-designLibrary") }
+    private var empty: Bool { ProcessInfo.processInfo.arguments.contains("-designEmpty") }
+    private var width: CGFloat { sizeClass == .regular ? 156 : Cinema.gridPosterWidth }
+    private var items: [PlexMetadata] { music ? DesignReviewSamples.albums : DesignReviewSamples.items }
+
+    var body: some View {
+        TabView {
+            NavigationStack {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 28) {
+                        if empty {
+                            EmptyStateView(title: "Your library starts here", systemImage: "square.stack", message: "Connect your server to bring your movies, shows and music together.")
+                                .frame(minHeight: 400)
+                        } else if library {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: width), spacing: 12)], alignment: .leading, spacing: 24) {
+                                ForEach(items) { PosterCard(item: $0, width: width) }
+                            }.padding(.horizontal)
+                        } else {
+                            HubRow(title: music ? "Made for your evening" : "Continue Watching", items: Array(items.prefix(2)), wide: !music)
+                            HubRow(title: music ? "Recently played" : "Recently added", items: items)
+                            HubRow(title: music ? "Rediscover your favorites" : "Worth another watch", items: Array(items.reversed()))
+                        }
+                    }.padding(.vertical, 16)
+                }
+                .pageTitle(library ? "Library" : music ? "Listen" : "Watch")
+                .toolbar { ToolbarItem(placement: .topBarTrailing) { Image(systemName: "person.crop.circle").font(.title2).foregroundStyle(Cinema.accent) } }
+                .withRoutes()
+            }.tabItem { Label("Home", systemImage: "house") }
+            Text("Library").tabItem { Label("Library", systemImage: "square.stack") }
+            Text("Search").tabItem { Label("Search", systemImage: "magnifyingglass") }
+            Text("Downloads").tabItem { Label("Downloads", systemImage: "arrow.down.circle") }
+        }
+        .environment(\.mediaMode, music ? .music : .watch)
+    }
+}
+#endif

@@ -18,12 +18,23 @@ struct LotsOfMediaTVApp: App {
 
     var body: some Scene {
         WindowGroup {
-            TVRootView()
+            Group {
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("-designReview") { TVDesignReviewView() } else { TVRootView() }
+                #else
+                TVRootView()
+                #endif
+            }
                 .environment(session)
                 .environment(ProStore.shared)
                 .preferredColorScheme(.dark)
                 .tint(.white)
-                .task { await session.bootstrap() }
+                .task {
+                    #if DEBUG
+                    if ProcessInfo.processInfo.arguments.contains("-designReview") { return }
+                    #endif
+                    await session.bootstrap()
+                }
         }
     }
 }
@@ -72,6 +83,14 @@ struct TVRootView: View {
                     .tabItem { Label("Settings", systemImage: "gearshape") }.tag(Tab.settings)
             }
             .id("\(session.selectedServerID ?? "")-\(session.user?.uuid ?? "")")
+            .opacity(hidesDashboardForProfileSelection ? 0 : 1)
+            .disabled(hidesDashboardForProfileSelection)
+            .overlay {
+                if hidesDashboardForProfileSelection {
+                    ProgressView("Loading profiles…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
             .background(TVTheme.background.ignoresSafeArea())
             .task(id: session.status == .connected) {
                 guard session.status == .connected, let api = session.api else { return }
@@ -121,8 +140,8 @@ struct TVRootView: View {
             }
             // Plex Home with Pro: who's watching, once when the app opens.
             .fullScreenCover(isPresented: $askWhoIsWatching) { TVProfilePicker(suggested: suggestedProfile) }
-            .onChange(of: session.canSwitchUsers, initial: true) { _, can in
-                guard can, !askedWhoIsWatching, asksWhoIsWatching else { return }
+            .onChange(of: asksWhoIsWatching, initial: true) { _, shouldAsk in
+                guard shouldAsk, !askedWhoIsWatching else { return }
                 askedWhoIsWatching = true
                 askWhoIsWatching = true
             }
@@ -172,6 +191,15 @@ struct TVRootView: View {
         } else {
             openedItem = item
         }
+    }
+
+    /// Keep the presenting view neutral until profiles arrive and while the picker opens.
+    /// The tab view stays mounted so startup tasks and Top Shelf links still run.
+    private var hidesDashboardForProfileSelection: Bool {
+        if askWhoIsWatching { return true }
+        guard !askedWhoIsWatching, TVProfilePicker.isEnabled, ProStore.shared.isUnlocked,
+              session.token != nil, session.selectedServer?.isJellyfin != true else { return false }
+        return !session.homeUsersLoaded || session.canSwitchUsers
     }
 
     private var asksWhoIsWatching: Bool { session.canSwitchUsers && TVProfilePicker.isEnabled && ProStore.shared.isUnlocked }

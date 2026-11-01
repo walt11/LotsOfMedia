@@ -468,7 +468,9 @@ private struct ShortcutTile: View {
 
 struct LibrarySectionView: View {
     @Environment(\.mediaMode) private var mediaMode
-    @ScaledMetric(relativeTo: .body) private var posterWidth = Cinema.gridPosterWidth
+    @Environment(\.horizontalSizeClass) private var gridSizeClass
+    @ScaledMetric(relativeTo: .body) private var scaledPosterWidth = Cinema.gridPosterWidth
+    private var gridPosterWidth: CGFloat { max(scaledPosterWidth, gridSizeClass == .regular ? 156 : Cinema.gridPosterWidth) }
     @Environment(AppState.self) private var app
     let section: PlexDirectory
     @Environment(AudioPlayer.self) private var audio
@@ -546,7 +548,7 @@ struct LibrarySectionView: View {
     private let pageSize = 60
     /// The most items refreshed in place when coming back to the list.
     static let refreshWindow = 300
-    private var columns: [GridItem] { [GridItem(.adaptive(minimum: posterWidth), spacing: 12)] }
+    private var columns: [GridItem] { [GridItem(.adaptive(minimum: gridPosterWidth), spacing: 12)] }
 
     private var modes: [Mode] {
         switch section.type {
@@ -615,7 +617,7 @@ struct LibrarySectionView: View {
                                 if selection.isActive {
                                     let on = selection.contains(item.ratingKey)
                                     Button { selection.toggle(item.ratingKey) } label: {
-                                        PosterCard(item: item, width: posterWidth)
+                                        PosterCard(item: item, width: gridPosterWidth)
                                             .overlay(alignment: .topLeading) {
                                                 Image(systemName: on ? "checkmark.circle.fill" : "circle")
                                                     .font(.title3)
@@ -627,7 +629,7 @@ struct LibrarySectionView: View {
                                     }
                                     .accessibilityAddTraits(on ? .isSelected : [])
                                 } else {
-                                    NavigationLink(value: item.route) { PosterCard(item: item, width: posterWidth) }
+                                    NavigationLink(value: item.route) { PosterCard(item: item, width: gridPosterWidth) }
                                         .contextMenu { ItemContextMenu(item: item) }
                                 }
                             }
@@ -884,7 +886,9 @@ struct LibrarySectionView: View {
 
 struct HubGridView: View {
     @Environment(\.mediaMode) private var mediaMode
-    @ScaledMetric(relativeTo: .body) private var posterWidth = Cinema.gridPosterWidth
+    @Environment(\.horizontalSizeClass) private var gridSizeClass
+    @ScaledMetric(relativeTo: .body) private var scaledPosterWidth = Cinema.gridPosterWidth
+    private var gridPosterWidth: CGFloat { max(scaledPosterWidth, gridSizeClass == .regular ? 156 : Cinema.gridPosterWidth) }
     @Environment(AppState.self) private var app
     let key: String
     let title: String
@@ -893,9 +897,9 @@ struct HubGridView: View {
 
     var body: some View {
         ScrollView {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: posterWidth), spacing: 12)], spacing: 16) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: gridPosterWidth), spacing: 12)], spacing: 16) {
                 ForEach(items) { item in
-                    NavigationLink(value: item.route) { PosterCard(item: item, width: posterWidth) }
+                    NavigationLink(value: item.route) { PosterCard(item: item, width: gridPosterWidth) }
                         .buttonStyle(.plain)
                         .contextMenu { ItemContextMenu(item: item) }
                 }
@@ -1575,13 +1579,15 @@ struct GenreView: View {
     let genre: GenreEntry
     @State private var items: [PlexMetadata] = []
     @State private var loading = true
-    @ScaledMetric(relativeTo: .body) private var posterWidth = Cinema.gridPosterWidth
+    @Environment(\.horizontalSizeClass) private var gridSizeClass
+    @ScaledMetric(relativeTo: .body) private var scaledPosterWidth = Cinema.gridPosterWidth
+    private var gridPosterWidth: CGFloat { max(scaledPosterWidth, gridSizeClass == .regular ? 156 : Cinema.gridPosterWidth) }
 
     var body: some View {
         ScrollView {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: posterWidth), spacing: 12)], spacing: 16) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: gridPosterWidth), spacing: 12)], spacing: 16) {
                 ForEach(items) { item in
-                    NavigationLink(value: item.route) { PosterCard(item: item, width: posterWidth) }.buttonStyle(.plain)
+                    NavigationLink(value: item.route) { PosterCard(item: item, width: gridPosterWidth) }.buttonStyle(.plain)
                 }
             }
             .padding()

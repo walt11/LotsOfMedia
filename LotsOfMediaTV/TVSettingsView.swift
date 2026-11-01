@@ -496,7 +496,7 @@ struct TVProfilePicker: View {
 
     private var profiles: some View {
         VStack(spacing: 60) {
-            Text("Who's Watching?").font(.system(size: 66, weight: .heavy).width(.compressed))
+            Text("Who's Watching?").font(TVTheme.title(64))
             HStack(spacing: 60) {
                 ForEach(session.homeUsers) { user in
                     Button {

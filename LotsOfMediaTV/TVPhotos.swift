@@ -52,7 +52,7 @@ struct TVPhotoAlbumView: View {
     var body: some View {
         TVPageScrollView {
             VStack(alignment: .leading, spacing: 30) {
-                Text(album.item.title).font(.system(size: 60, weight: .heavy).width(.compressed))
+                Text(album.item.title).font(TVTheme.title(60))
                 TVPhotoGrid(items: items)
             }
             .padding(.horizontal, 80)

@@ -51,7 +51,7 @@ struct TVHomeView: View {
                             }
                         }
                         if loaded && continueWatching.isEmpty && hubs.isEmpty {
-                            Text("Nothing here yet. Add media to your Plex server to see it here.")
+                            Text("Your library starts here. Add movies, shows or music to your server to see them here.")
                                 .foregroundStyle(.secondary).padding(.horizontal, 80)
                         }
                     }
@@ -151,6 +151,7 @@ struct TVRow<Content: View>: View {
 /// A poster with its title underneath; lifts when focused.
 struct TVPosterCard: View {
     @Environment(\.isFocused) private var focused
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let item: PlexMetadata
     var width: CGFloat = 250
 
@@ -161,17 +162,16 @@ struct TVPosterCard: View {
             TVImage(path: item.posterThumb ?? item.thumb, width: 500, height: square ? 500 : 750,
                     placeholderIcon: square ? "music.note" : "film")
                 .frame(width: width, height: square ? width : width * 1.5)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .clipShape(RoundedRectangle(cornerRadius: 16))
                 .overlay(alignment: .bottom) { TVProgressBar(item: item) }
                 .hoverEffect(.highlight)
             Text(item.tvCardTitle).font(.callout.weight(.semibold)).lineLimit(1)
-                .foregroundStyle(focused ? .white : .white.opacity(0.7))
-            Text(item.tvCardSubtitle ?? " ").font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                .opacity(focused ? 1 : 0.7)
+                .foregroundStyle(focused ? .white : .white.opacity(0.92))
+            Text(item.tvCardSubtitle ?? " ").font(.caption).foregroundStyle(TVTheme.secondary).lineLimit(1)
         }
         .frame(width: width)
-        .offset(y: focused ? 8 : 0)   // the title follows the lifted poster
-        .animation(.easeOut(duration: 0.18), value: focused)
+        .offset(y: focused && !reduceMotion ? 8 : 0)   // the title follows the lifted poster
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: focused)
         .clearsSpotlight()
     }
 }
@@ -193,7 +193,7 @@ struct TVWideCard: View {
                         Text(item.tvCardTitle).font(.headline).lineLimit(1)
                         Text([item.kind == .episode ? item.subtitleLine : nil,
                               Fmt.remaining(ms: item.duration, offset: item.viewOffset)].compactMap { $0 }.joined(separator: " · "))
-                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            .font(.caption).foregroundStyle(TVTheme.secondary).lineLimit(1)
                         ProgressView(value: item.progress ?? 0).tint(TVTheme.accent)
                     }
                     .padding(20)
@@ -222,3 +222,57 @@ struct TVProgressBar: View {
         }
     }
 }
+
+#if DEBUG
+/// Synthetic media for repeatable visual review; no account, library or credentials are changed.
+enum DesignReviewSamples {
+    static let items: [PlexMetadata] = (0..<8).compactMap { index in
+        let titles = ["Northern Light", "The Long Way Home", "After Hours", "Open Water", "A Quiet Place", "City Stories", "Coast to Coast", "The Last Journey"]
+        let item: [String: Any] = ["ratingKey": "design-\(index)", "title": titles[index], "type": "movie", "year": 2024 + index % 2,
+            "duration": 6_840_000, "viewOffset": index < 2 ? 1_800_000 : 0,
+            "thumb": "http://127.0.0.1:18766/cover\(index).png", "art": "http://127.0.0.1:18766/wide\(index).png",
+            "summary": "Extraordinary stories. Unexpected discoveries. Find something worth your evening."]
+        guard let data = try? JSONSerialization.data(withJSONObject: item) else { return nil }
+        return try? JSONDecoder().decode(PlexMetadata.self, from: data)
+    }
+    static var albums: [PlexMetadata] {
+        items.enumerated().map { index, original in
+            var item = original
+            item.type = "album"
+            item.parentTitle = ["The Midnight", "Coastal Radio", "Juniper", "Slow Motion"][index % 4]
+            return item
+        }
+    }
+}
+#endif
+
+#if DEBUG
+struct TVDesignReviewView: View {
+    var body: some View {
+        NavigationStack {
+            ZStack(alignment: .topLeading) {
+                TVAmbientBackdrop(item: DesignReviewSamples.items.first)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        HStack(spacing: 30) {
+                            ForEach(["Home", "Live TV", "Library", "Search", "Settings"], id: \.self) { title in
+                                Button(title) {}.buttonStyle(TVActionStyle(selected: title == "Home"))
+                            }
+                        }.frame(maxWidth: .infinity).padding(.top, 24)
+                        TVSpotlightHeader(item: DesignReviewSamples.items.first)
+                            .padding(.horizontal, 80).frame(height: 280, alignment: .bottomLeading)
+                        TVRow(title: "Continue Watching") {
+                            ForEach(DesignReviewSamples.items.prefix(3)) { item in TVWideCard(item: item) {} }
+                        }
+                        TVRow(title: "Recently added") {
+                            ForEach(DesignReviewSamples.items) { item in
+                                Button {} label: { TVPosterCard(item: item) }.buttonStyle(.borderless)
+                            }
+                        }
+                    }.padding(.bottom, 80)
+                }
+            }
+        }
+    }
+}
+#endif

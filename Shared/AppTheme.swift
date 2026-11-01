@@ -11,6 +11,10 @@ enum AppTheme {
     static let muted = Color(red: 0.55, green: 0.59, blue: 0.65)
     static let surface = Color(red: 0.08, green: 0.10, blue: 0.14)
     static let placeholder = Color(red: 0.13, green: 0.15, blue: 0.20)
+    /// Shared surface definition: visible edges without heavy card shadows.
+    static let border = Color.white.opacity(0.12)
+    static let cardRadius: CGFloat = 12
+    static let controlRadius: CGFloat = 14
     /// Distinct from the accent so "converting" never reads as "downloading".
     static let converting = Color(red: 0.66, green: 0.55, blue: 1.0)
 }

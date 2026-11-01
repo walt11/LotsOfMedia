@@ -6,7 +6,9 @@ struct DownloadsView: View {
     @Environment(AppState.self) private var app
     @Environment(DownloadManager.self) private var downloads
     @Environment(AudioPlayer.self) private var audio
-    @ScaledMetric(relativeTo: .body) private var posterWidth = Cinema.gridPosterWidth
+    @Environment(\.horizontalSizeClass) private var gridSizeClass
+    @ScaledMetric(relativeTo: .body) private var scaledPosterWidth = Cinema.gridPosterWidth
+    private var gridPosterWidth: CGFloat { max(scaledPosterWidth, gridSizeClass == .regular ? 156 : Cinema.gridPosterWidth) }
     @State private var showingQueue = false
     @State private var pendingRemoval: Removal?
     @State private var confirmCancelAll = false
@@ -270,7 +272,7 @@ struct DownloadsView: View {
                                               @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionTitle(title)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: posterWidth), spacing: 12, alignment: .top)],
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: gridPosterWidth), spacing: 12, alignment: .top)],
                       alignment: .leading, spacing: 16, content: content)
                 .padding(.horizontal)
         }
