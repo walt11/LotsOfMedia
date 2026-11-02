@@ -412,6 +412,9 @@ struct TVGuideGrid<Menu: View>: View {
                         }
                     }
                     .scrollClipDisabled()
+                    // Rows scrolled up out of the grid go under the ruler instead of drawing over it; the
+                    // other edges stay open for the focus lift and its shadow.
+                    .clipShape(TVClipAbove())
                     // From the top of the grid down over every row: drawn on the grid's frame, not on the
                     // scrolling list (which isn't clipped, for the focus lift, so a line on it reached up
                     // past the grid once scrolled); as tall as the rows, which may run past the frame.
@@ -639,6 +642,13 @@ struct TVGuideGrid<Menu: View>: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .allowsHitTesting(false)
         }
+    }
+}
+
+/// Clips only what's above the top edge.
+private struct TVClipAbove: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path(CGRect(x: rect.minX - 2000, y: rect.minY, width: rect.width + 4000, height: rect.height + 2000))
     }
 }
 
