@@ -13,6 +13,9 @@ final class LiveTVFocusUITests: XCTestCase {
         return f.exists ? f.identifier : ""
     }
 
+    /// The filter row's first chips; Down from the tab bar lands on whichever is under Live TV.
+    private static let filters: Set<String> = ["Guide", "On Now", "Recordings", "All Channels", "Favorites"]
+
     private func press(_ button: XCUIRemote.Button, times: Int = 1) {
         for _ in 0..<times { XCUIRemote.shared.press(button); sleep(1) }
     }
@@ -35,7 +38,7 @@ final class LiveTVFocusUITests: XCTestCase {
         press(.menu)
         XCTAssertEqual(focusedLabel(app), "Live TV", "then the tab bar")
         press(.down)
-        XCTAssertEqual(focusedLabel(app), "All Channels", "Down reaches the filters")
+        XCTAssertTrue(Self.filters.contains(focusedLabel(app)), "Down reaches the filters")
         press(.down)
         XCTAssertEqual(focusedID(app), firstRow, "and Down again the guide")
     }
@@ -67,7 +70,7 @@ final class LiveTVFocusUITests: XCTestCase {
         press(.menu)
         XCTAssertEqual(focusedLabel(app), "Live TV", "then the tab bar")
         press(.down)
-        XCTAssertEqual(focusedLabel(app), "All Channels", "Down reaches the filters")
+        XCTAssertTrue(Self.filters.contains(focusedLabel(app)), "Down reaches the filters")
         press(.down)
         // The band still shows the last program, so step along the row and back to prove where focus is.
         press(.right)
@@ -101,5 +104,35 @@ final class LivePlayPauseUITests: XCTestCase {
         sleep(1)
         XCUIRemote.shared.press(.playPause)
         sleep(8)
+    }
+
+    /// The way it's watched: a channel picked in the guide, Play/Pause right away and after it
+    /// starts; then Back to the corner window, Select to go full screen again, and Play/Pause.
+    func testPlayPauseFromTheGuide() throws {
+        guard let stream = ProcessInfo.processInfo.environment["LIVE_URL"] else {
+            throw XCTSkip("Set LIVE_URL to a live HLS fixture (tools/live_seek_fixture.py).")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["-proUnlocked", "-tvLiveSample", "-tvTab", "live",
+                               "-tvLiveURL", stream, "-tvLiveDiagnostics"]
+        app.launch()
+        sleep(6)
+        for _ in 0..<2 { XCUIRemote.shared.press(.down); sleep(1) }
+        XCUIRemote.shared.press(.select)      // watch the first channel
+        sleep(10)
+        XCUIRemote.shared.press(.playPause)   // pause
+        sleep(6)
+        XCUIRemote.shared.press(.playPause)   // play
+        sleep(6)
+        XCUIRemote.shared.press(.menu)        // back to the guide, the channel in the corner
+        sleep(4)
+        XCUIRemote.shared.press(.menu)        // focus to the corner window
+        sleep(2)
+        XCUIRemote.shared.press(.select)      // full screen again
+        sleep(4)
+        XCUIRemote.shared.press(.playPause)   // pause
+        sleep(6)
+        XCUIRemote.shared.press(.playPause)   // play
+        sleep(6)
     }
 }

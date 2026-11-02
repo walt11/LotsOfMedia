@@ -284,6 +284,14 @@ struct TVPageScrollView<Content: View>: View {
     private static var topID: String { "tv.page.top" }
 }
 
+/// Clips only what's above the top edge: for an unclipped list (kept open for the focus lift) whose
+/// rows would otherwise scroll up over the controls above it.
+struct TVClipAbove: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path(CGRect(x: rect.minX - 2000, y: rect.minY, width: rect.width + 4000, height: rect.height + 2000))
+    }
+}
+
 // MARK: - PIN pad
 
 /// A Plex Home profile's 4-digit PIN on a number pad, checked as soon as the fourth digit is in:

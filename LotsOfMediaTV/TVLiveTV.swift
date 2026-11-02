@@ -263,6 +263,8 @@ struct TVLiveTVView: View {
             }
         }
         .scrollClipDisabled()
+        // Rows scrolled up go under the filters instead of drawing over them.
+        .clipShape(TVClipAbove())
     }
 
     // MARK: Recordings
@@ -645,13 +647,6 @@ struct TVGuideGrid<Menu: View>: View {
     }
 }
 
-/// Clips only what's above the top edge.
-private struct TVClipAbove: Shape {
-    func path(in rect: CGRect) -> Path {
-        Path(CGRect(x: rect.minX - 2000, y: rect.minY, width: rect.width + 4000, height: rect.height + 2000))
-    }
-}
-
 /// One program in the grid: title and time, the part already aired shaded, a red dot when recording.
 private struct TVGuideCell: View {
     let airing: LiveAiring
@@ -909,6 +904,8 @@ final class TVLiveNow {
     @ObservationIgnored private var pausedInactive: Date?
     /// When playback last paused or played, so a press handled one way isn't handled again another.
     @ObservationIgnored private var lastRateChange = Date.distantPast
+    /// When Play/Pause last paused or played here: one press can arrive more than one way.
+    @ObservationIgnored private var lastToggle = Date.distantPast
     @ObservationIgnored private var rateObservation: NSKeyValueObservation?
     /// On a live stream tvOS sends the remote's Play/Pause as a media command, not a press: these
     /// take it while a channel plays (the shared command center, and the channel's own Now Playing
@@ -996,12 +993,24 @@ final class TVLiveNow {
         isFullScreen = true
     }
 
-    /// Play/Pause (or Select on the picture) pressed at `pressedAt`: pauses or plays, unless playback
-    /// already did for this press. The press can arrive several ways (the player view, tvOS's remote
-    /// commands, the Live TV page), and Apple's player handles it itself on a stream it can seek in.
-    func togglePause(pressedAt: Date = Date()) {
+    /// Play/Pause pressed: pauses or plays at once. Apple's player is kept out of it (its own
+    /// handling paused a live channel again a moment after resuming it); the press can still arrive
+    /// more than one way (the player view, tvOS's remote commands, the Live TV page), so only the
+    /// first within a moment counts.
+    func togglePause() {
         #if DEBUG
         TVLivePlaybackController.debugLog("togglePause")
+        #endif
+        guard let player, Date().timeIntervalSince(lastToggle) > 0.6 else { return }
+        lastToggle = Date()
+        if player.rate == 0 { player.play() } else { player.pause() }
+    }
+
+    /// Select on the picture, pressed at `pressedAt`: pauses or plays, unless Apple's player (which
+    /// plays on Select when paused) or Play/Pause already did for this press.
+    func togglePauseUnlessHandled(pressedAt: Date) {
+        #if DEBUG
+        TVLivePlaybackController.debugLog("togglePauseUnlessHandled")
         #endif
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
             MainActor.assumeIsolated {
@@ -1009,6 +1018,7 @@ final class TVLiveNow {
                 #if DEBUG
                 TVLivePlaybackController.debugLog("toggled here")
                 #endif
+                self.lastToggle = Date()
                 if player.rate == 0 { player.play() } else { player.pause() }
             }
         }
@@ -1079,11 +1089,12 @@ private struct TVLiveFullScreenRepresentable: UIViewControllerRepresentable {
     // Leaving full screen keeps the channel playing (the corner window shows it).
 }
 
-/// Retains readable seek status over live video. A fallback handles the dedicated Play/Pause
-/// button when AVKit does not act; Select remains owned by AVKit's focused controls.
+/// Apple's player for live TV. Play/Pause is handled here alone (Apple's own handling is switched
+/// off); Select on the picture pauses or plays too, alongside Apple's player.
 private final class TVLivePlayerViewController: TVFocusedPlayerViewController, UIGestureRecognizerDelegate {
     /// Beginning of the current dedicated remote-button press.
     private var pressStarted = Date.distantPast
+    private var ownTaps: [UIGestureRecognizer] = []
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -1094,12 +1105,31 @@ private final class TVLivePlayerViewController: TVFocusedPlayerViewController, U
             tap.cancelsTouchesInView = false
             tap.delegate = self
             view.addGestureRecognizer(tap)
+            ownTaps.append(tap)
         }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        silenceBuiltInPlayPause()
+    }
+
+    /// Apple's player adds its own Play/Pause recognizers (some only as its controls show): off.
+    private func silenceBuiltInPlayPause() {
+        let playPause = [NSNumber(value: UIPress.PressType.playPause.rawValue)]
+        func walk(_ v: UIView) {
+            for g in v.gestureRecognizers ?? [] where g.isEnabled && g.allowedPressTypes == playPause && !ownTaps.contains(g) {
+                g.isEnabled = false
+            }
+            v.subviews.forEach(walk)
+        }
+        walk(view)
     }
 
     func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        silenceBuiltInPlayPause()
         if presses.contains(where: { $0.type == .playPause || $0.type == .select }) { pressStarted = Date() }
         super.pressesBegan(presses, with: event)
     }
@@ -1111,10 +1141,11 @@ private final class TVLivePlayerViewController: TVFocusedPlayerViewController, U
         #endif
         // Select only pauses from the picture itself, not on a button or menu (Jump to Live…).
         let isSelect = tap.allowedPressTypes.contains(NSNumber(value: UIPress.PressType.select.rawValue))
-        if isSelect, !Self.isPicture(focused) { return }
+        guard isSelect else { TVLiveNow.shared.togglePause(); return }
+        if !Self.isPicture(focused) { return }
         // When the press began (Apple's player acts then); if that wasn't heard, a moment ago.
         let pressedAt = Date().timeIntervalSince(pressStarted) < 2 ? pressStarted : Date().addingTimeInterval(-0.6)
-        TVLiveNow.shared.togglePause(pressedAt: pressedAt)
+        TVLiveNow.shared.togglePauseUnlessHandled(pressedAt: pressedAt)
     }
 
     /// Whether focus is on the playing picture: nothing, or a view that isn't a control, a cell or
