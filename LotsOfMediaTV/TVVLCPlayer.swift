@@ -41,6 +41,9 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
     private weak var drawable: UIView?
     private var sleepObserver: NSObjectProtocol?
     private var foregroundObserver: NSObjectProtocol?
+    private var backgroundObserver: NSObjectProtocol?
+    /// Finished loading after the app was left: starts on the way back.
+    private var startOnReturn = false
 
     private var queue: [PlexMetadata]
     private var index: Int
@@ -51,6 +54,13 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
     private var skipTarget: Int?
     private var sessionID = UUID().uuidString
     private var lastReport = Date.distantPast
+    /// What the server was last told, and what VLC last said: it repeats a state many times a second.
+    private var lastState = ""
+    private var lastPlayerState: VLCMediaPlayerState?
+    /// The newest load; an older one finishing late is ignored.
+    private var loadID = UUID()
+    /// Profile and server the language choices are remembered for.
+    private var languageScope = ""
     private var tracksApplied = false
     private var stopped = false
     private var ending = false
@@ -76,7 +86,16 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
         foregroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, !self.stopped else { return }
+                if self.startOnReturn { self.startOnReturn = false; self.mediaPlayer.play(); return }
                 if self.errorMessage != nil || self.mediaPlayer.state == .error || self.mediaPlayer.state == .stopped { self.retry() }
+            }
+        }
+        // The app may play audio in the background for music; a video stops when it's left.
+        backgroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.stopped, self.mediaPlayer.isPlaying || self.isBuffering else { return }
+                self.mediaPlayer.pause()
+                self.report(force: true)
             }
         }
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
@@ -88,8 +107,23 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
     private func load(_ i: Int, resume: Bool, startMs: Int? = nil) async {
         guard !stopped, let api = session.api, queue.indices.contains(i) else { return onFinish() }
         index = i
-        let item = (try? await api.metadata(queue[i].ratingKey)) ?? queue[i]
-        guard !stopped else { return }
+        let id = UUID()
+        loadID = id
+        var loaded = ((try? await api.metadata(queue[i].ratingKey)) ?? queue[i]).usingPlaybackVersion(of: queue[i])
+        guard !stopped, id == loadID else { return }
+        // The remembered languages, set on the server first so the file opens on them.
+        let scope = TVLanguagePreference.scope(session: session)
+        languageScope = scope
+        if let partID = loaded.primaryPart?.id,
+           let change = LanguagePreference.change(for: loaded.primaryPart, audio: TVLanguagePreference.audio(scope: scope),
+                                                  subtitle: TVLanguagePreference.subtitle(scope: scope)) {
+            try? await api.selectStreams(partID: partID, audioStreamID: change.audioStreamID, subtitleStreamID: change.subtitleStreamID)
+            let key = loaded.ratingKey
+            let fresh = (try? await LibraryCache.$requireFresh.withValue(true) { try await api.metadata(key) }) ?? nil
+            if let fresh { loaded = fresh.usingPlaybackVersion(of: queue[i]) }
+            guard !stopped, id == loadID else { return }
+        }
+        let item = loaded
         current = item
         markers = item.markers
         durationMs = item.duration ?? 0
@@ -97,6 +131,7 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
         sessionID = UUID().uuidString
         audioTracks = []; subtitleTracks = []; tracksApplied = false
         skipLabel = nil; errorMessage = nil; isBuffering = true; ending = false; lastReport = .distantPast
+        lastState = ""; lastPlayerState = nil
         upNext = nil; upNextHidden = false; upNextLeft = nil; upNextCountdown.reset()
         // The TV switches to this file's frame rate and HDR format (with Match Content on).
         TVDisplayMatch.apply(for: item, in: drawable)
@@ -122,7 +157,7 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
         if let n = VLCTrackChoice.audioIndex(in: item) { media.addOption(":audio-track=\(n)") }
         if TVAudioOutput.passthrough { media.addOption(":spdif") }
         mediaPlayer.media = media
-        mediaPlayer.play()
+        if UIApplication.shared.applicationState == .background { startOnReturn = true } else { mediaPlayer.play() }
         mediaPlayer.rate = speed
         mediaPlayer.currentAudioPlaybackDelay = audioDelayMs * 1000
         mediaPlayer.audio?.passthrough = TVAudioOutput.passthrough
@@ -142,6 +177,23 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
     func seek(toMs ms: Int) { mediaPlayer.time = VLCTime(int: Int32(max(0, ms))) }
     func selectAudio(_ id: Int32) { mediaPlayer.currentAudioTrackIndex = id; currentAudio = id }
     func selectSubtitle(_ id: Int32) { mediaPlayer.currentVideoSubTitleIndex = id; currentSubtitle = id }
+
+    /// The viewer picked this in the menu: it's also remembered for what plays next.
+    func chooseAudio(_ id: Int32) {
+        selectAudio(id)
+        guard let part = current?.primaryPart, let n = audioTracks.firstIndex(where: { $0.id == id }),
+              let code = VLCTrackChoice.audioLanguage(atPosition: n, in: part) else { return }
+        TVLanguagePreference.rememberAudio(code, scope: languageScope)
+    }
+
+    func chooseSubtitle(_ id: Int32) {
+        selectSubtitle(id)
+        if id < 0 { return TVLanguagePreference.rememberSubtitle(nil, scope: languageScope) }
+        guard let part = current?.primaryPart, let n = subtitleTracks.filter({ $0.id >= 0 }).firstIndex(where: { $0.id == id }),
+              let code = VLCTrackChoice.subtitleLanguage(atPosition: n, in: part) else { return }
+        TVLanguagePreference.rememberSubtitle(code, scope: languageScope)
+    }
+
     func performSkip() { if let skipTarget { seek(toMs: skipTarget) } }
     /// After an error: reload this item where it stopped.
     func retry() {
@@ -158,11 +210,8 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
         guard let next = upNext, !stopped else { return }
         upNext = nil; upNextLeft = nil
         ending = true
-        let finished = current, id = sessionID
-        Task { [session] in
-            await TVPlaybackReporting.report(finished, state: "stopped", timeMs: finished?.duration ?? 0, sessionID: id, session: session)
-            if let finished, let api = session.api { try? await api.scrobble(finished.ratingKey) }
-        }
+        let finished = current, id = sessionID, api = session.api
+        Task { await TVPlaybackReporting.reportFinished(finished, sessionID: id, api: api, fallbackMs: timeMs) }
         if !(queue.indices.contains(index + 1) && queue[index + 1].ratingKey == next.ratingKey) {
             queue.insert(next, at: index + 1)
         }
@@ -177,10 +226,12 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
     func stop() {
         guard !stopped else { return }
         stopped = true
-        let item = current, time = timeMs, id = sessionID
+        // Already reported as finished, if it played to its end.
+        let item = ending ? nil : current, time = timeMs, id = sessionID
         mediaPlayer.stop()
         if let sleepObserver { NotificationCenter.default.removeObserver(sleepObserver) }
         if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver) }
+        if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
         TVDisplayMatch.reset(in: drawable)
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         Task { [session] in
@@ -200,19 +251,22 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
     }
 
     private func stateChanged() {
-        switch mediaPlayer.state {
+        let state = mediaPlayer.state
+        guard state != lastPlayerState else { return }
+        lastPlayerState = state
+        switch state {
         case .buffering, .opening: setBuffering(true)
         case .playing: setBuffering(false); if !isPlaying { isPlaying = true }
         case .paused: if isPlaying { isPlaying = false }; setBuffering(false)
         case .ended, .stopped:
             isPlaying = false
-            if !stopped, mediaPlayer.state == .ended || (durationMs > 0 && timeMs > durationMs - 3000) { itemEnded() }
+            if !stopped, state == .ended || (durationMs > 0 && timeMs > durationMs - 3000) { itemEnded() }
         case .error:
             isBuffering = false
             errorMessage = "This file couldn't be played."
         default: break
         }
-        if !stopped { report(force: true) }
+        if !stopped { report(force: false) }
         updateNowPlaying()
     }
 
@@ -286,9 +340,10 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
     }
 
     private func report(force: Bool) {
-        guard let current, force || Date().timeIntervalSince(lastReport) >= 10 else { return }
-        lastReport = Date()
         let state = mediaPlayer.isPlaying ? "playing" : "paused"
+        guard let current, force || state != lastState || Date().timeIntervalSince(lastReport) >= 10 else { return }
+        lastState = state
+        lastReport = Date()
         let time = timeMs, id = sessionID
         Task { [session] in await TVPlaybackReporting.report(current, state: state, timeMs: time, sessionID: id, session: session) }
     }
@@ -297,21 +352,17 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
         guard !ending else { return }
         if TVSleepTimer.shared.shouldStopAtItemEnd() {
             ending = true
-            let finished = current, id = sessionID
+            let finished = current, id = sessionID, api = session.api, position = timeMs
             Task { [session] in
-                await TVPlaybackReporting.report(finished, state: "stopped", timeMs: finished?.duration ?? 0, sessionID: id, session: session)
-                if let finished, let api = session.api { try? await api.scrobble(finished.ratingKey) }
+                await TVPlaybackReporting.reportFinished(finished, sessionID: id, api: api, fallbackMs: position)
                 session.contentVersion += 1
             }
             return onFinish()
         }
         if upNext != nil, !upNextHidden { return playNext() }
         ending = true
-        let finished = current, id = sessionID
-        Task { [session] in
-            await TVPlaybackReporting.report(finished, state: "stopped", timeMs: finished?.duration ?? 0, sessionID: id, session: session)
-            if let finished, let api = session.api { try? await api.scrobble(finished.ratingKey) }
-        }
+        let finished = current, id = sessionID, api = session.api, position = timeMs
+        Task { await TVPlaybackReporting.reportFinished(finished, sessionID: id, api: api, fallbackMs: position) }
         if index + 1 < queue.count, !upNextHidden {
             Task { await load(index + 1, resume: false) }
         } else {
@@ -442,11 +493,11 @@ struct TVVLCPlayerView: View {
                 }
             } else if choosing == .audio {
                 ForEach(playback.audioTracks) { t in
-                    Button(t.id == playback.currentAudio ? "✓ \(t.name)" : t.name) { playback.selectAudio(t.id) }
+                    Button(t.id == playback.currentAudio ? "✓ \(t.name)" : t.name) { playback.chooseAudio(t.id) }
                 }
             } else {
                 ForEach(playback.subtitleTracks) { t in
-                    Button(t.id == playback.currentSubtitle ? "✓ \(t.name)" : t.name) { playback.selectSubtitle(t.id) }
+                    Button(t.id == playback.currentSubtitle ? "✓ \(t.name)" : t.name) { playback.chooseSubtitle(t.id) }
                 }
             }
             Button("Cancel", role: .cancel) {}

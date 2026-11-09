@@ -127,9 +127,13 @@ final class AppState {
         if let token = accountToken {
             // Installs from before Home support: the signed-in token is the primary one.
             if Keychain.string(for: "primaryAccountToken") == nil { Keychain.set(token, for: "primaryAccountToken") }
-            if user == nil, let u = try? await PlexAccount.user(token: token) {
-                guard generation == sessionGeneration else { return }
-                setUser(u)
+            if user == nil {
+                let lookUp = Task {
+                    guard let u = try? await PlexAccount.user(token: token), generation == sessionGeneration else { return }
+                    setUser(u)
+                }
+                // The profile is remembered from last time, so the server needn't wait on plex.tv.
+                if currentUserID == nil { await lookUp.value }
             }
             guard generation == sessionGeneration else { return }
             Task { await loadHomeUsers() }
@@ -268,7 +272,10 @@ final class AppState {
         if let server = ServerDirectory.shared.server(id: id), server.isJellyfin { Task { await JellyfinAuth.signOut(server) } }
         ServerDirectory.shared.remove(id: id)
         servers = ServerDirectory.shared.servers
-        if selectedServerID == id { select(serverID: servers.first?.id) }
+        if selectedServerID == id {
+            select(serverID: servers.first?.id)
+            Task { await connect() }
+        }
     }
 
     func select(serverID: String?) {

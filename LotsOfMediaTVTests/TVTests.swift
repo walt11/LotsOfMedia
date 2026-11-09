@@ -225,6 +225,39 @@ final class TVLiveScreenSaverTests: XCTestCase {
         XCTAssertNil(now.player)
     }
 
+    func testHomeScreenPausesFullScreenAndAQuickReturnResumes() throws {
+        let player = try playInCorner()
+        now.isFullScreen = true
+        let start = Date()
+        now.appDidEnterBackground(at: start)
+        XCTAssertEqual(player.timeControlStatus, .paused, "no sound at the Home Screen")
+        now.appWillEnterForeground(at: start.addingTimeInterval(5))
+        now.appDidBecomeActive(at: start.addingTimeInterval(5))
+        XCTAssertNotEqual(player.timeControlStatus, .paused, "a quick look away picks up again")
+        XCTAssertNotNil(now.channel)
+    }
+
+    func testALongTimeAtTheHomeScreenClosesTheChannel() throws {
+        _ = try playInCorner()
+        now.isFullScreen = true
+        let start = Date()
+        now.appDidEnterBackground(at: start)
+        now.appWillEnterForeground(at: start.addingTimeInterval(20))
+        XCTAssertNil(now.channel)
+    }
+
+    func testAChannelTheViewerPausedStaysPausedAfterAQuickReturn() throws {
+        let player = try playInCorner()
+        now.isFullScreen = true
+        player.pause()
+        let start = Date()
+        now.appDidEnterBackground(at: start)
+        now.appWillEnterForeground(at: start.addingTimeInterval(5))
+        now.appDidBecomeActive(at: start.addingTimeInterval(5))
+        XCTAssertEqual(player.timeControlStatus, .paused)
+        XCTAssertNotNil(now.channel)
+    }
+
     func testFullScreenKeepsPlaying() throws {
         let player = try playInCorner()
         now.isFullScreen = true

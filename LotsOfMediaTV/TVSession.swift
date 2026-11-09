@@ -7,7 +7,8 @@ final class TVSession {
     enum Status: Equatable { case idle, connecting, connected, failed(String) }
 
     private(set) var token: String? = Keychain.string(for: "accountToken")
-    private(set) var user: PlexUser? {
+    /// Starts as the profile from last time (just its ID), so nothing waits on plex.tv to know who's watching.
+    private(set) var user: PlexUser? = UserDefaults.standard.string(forKey: "currentUserUUID").map { PlexUser(uuid: $0) } {
         // The profile in use, for what's kept per profile (Live TV's recent channels), as on iPhone.
         didSet { UserDefaults.standard.set(user?.uuid, forKey: "currentUserUUID") }
     }
@@ -38,7 +39,18 @@ final class TVSession {
         guard status == .connected, Date().timeIntervalSince(lastContentRefresh) > 60 else { return }
         lastContentRefresh = Date()
         contentVersion += 1
+        Task { await refreshSections() }
     }
+
+    /// Picks up libraries added since connecting, or ones that failed to load then. A failure
+    /// keeps what's there.
+    func refreshSections() async {
+        guard status == .connected, let api else { return }
+        let gen = generation
+        guard let fresh = try? await api.sections(), gen == generation, fresh != sections else { return }
+        sections = fresh
+    }
+
     var selectedServer: PlexServer? {
         servers.first { $0.id == selectedServerID } ?? servers.first { $0.owned } ?? servers.first
     }
@@ -75,14 +87,31 @@ final class TVSession {
             if isSignedIn { await connect() }   // Jellyfin only
             return
         }
-        let gen = generation
-        if let session = try? await PlexAccount.prepareSession(token: token), gen == generation {
-            user = session.user
-            ServerDirectory.shared.setDiscovered(session.servers)
-            servers = ServerDirectory.shared.servers
+        // Servers known from last time connect right away; plex.tv is checked alongside.
+        if user != nil, !servers.isEmpty {
+            Task { await refreshAccount(token: token, reconnectIfNeeded: true) }
+        } else {
+            await refreshAccount(token: token, reconnectIfNeeded: false)
         }
         await connect()
         await loadHomeUsers()
+    }
+
+    private func refreshAccount(token: String, reconnectIfNeeded: Bool) async {
+        let gen = generation
+        guard let session = try? await PlexAccount.prepareSession(token: token), gen == generation else { return }
+        user = session.user
+        ServerDirectory.shared.setDiscovered(session.servers)
+        servers = ServerDirectory.shared.servers
+        guard reconnectIfNeeded else { return }
+        // plex.tv had something newer than the connection just made with last time's details.
+        let needsReconnect: Bool
+        switch status {
+        case .failed: needsReconnect = true
+        case .connected: needsReconnect = api?.token != selectedServer?.accessToken
+        default: needsReconnect = false
+        }
+        if needsReconnect { await connect() }
     }
 
     func signIn(token newToken: String) async throws {
@@ -106,14 +135,16 @@ final class TVSession {
 
     func signOut() {
         generation = UUID()
+        // While the connection is still here: their last progress goes to the server.
+        TVMusicPlayer.shared.stop()
+        TVLiveNow.shared.stop()
         Keychain.set(nil as Data?, for: "accountToken")
         Keychain.set(nil as Data?, for: "primaryAccountToken")
         ServerDirectory.shared.removeAll()
+        LibraryCache.clear()
         token = nil; user = nil; api = nil; servers = []; sections = []; homeUsers = []; currentHomeUser = nil; homeUsersLoaded = false
         selectedServerID = nil
         status = .idle
-        TVMusicPlayer.shared.stop()
-        TVLiveNow.shared.stop()
         LiveTVStore.shared.clearSession()
         TopShelfSnapshot.clear()
         TVSpotlight.shared.reset()

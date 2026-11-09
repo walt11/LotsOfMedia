@@ -56,6 +56,12 @@ protocol VideoQueueing: AnyObject {
 
 // MARK: - Playback
 
+/// Playback position, kept apart from the controller so only the scrubber redraws as it changes.
+final class BuiltInPlaybackClock: ObservableObject {
+    @Published var timeMs = 0
+    @Published var durationMs = 0
+}
+
 @MainActor
 final class BuiltInPlaybackController: NSObject, ObservableObject, VLCMediaPlayerDelegate, ExternalPlaybackControls, VideoQueueing {
     struct Track: Identifiable, Hashable { let id: Int32; let name: String }
@@ -65,8 +71,9 @@ final class BuiltInPlaybackController: NSObject, ObservableObject, VLCMediaPlaye
     @Published private(set) var upNext: [VideoPlayRequest]
     @Published private(set) var isPlaying = false
     @Published private(set) var isBuffering = true
-    @Published private(set) var timeMs = 0
-    @Published private(set) var durationMs = 0
+    let clock = BuiltInPlaybackClock()
+    private(set) var timeMs = 0 { didSet { if timeMs / 1000 != clock.timeMs / 1000 { clock.timeMs = timeMs } } }
+    private(set) var durationMs = 0 { didSet { if durationMs != clock.durationMs { clock.durationMs = durationMs } } }
     @Published var errorMessage: String?
     @Published private(set) var audioTracks: [Track] = []
     @Published private(set) var subtitleTracks: [Track] = []
@@ -83,6 +90,8 @@ final class BuiltInPlaybackController: NSObject, ObservableObject, VLCMediaPlaye
     var onFinished: (() -> Void)?
 
     private var userID: String? { request.progressUserID }
+    /// The request's item, or a fresher copy once the remembered languages are set on the server.
+    private var item: PlexMetadata
     private var api: PlexServerAPI?
     private var sessionID = UUID().uuidString
     private var markers: [PlexMarker] = []
@@ -96,6 +105,7 @@ final class BuiltInPlaybackController: NSObject, ObservableObject, VLCMediaPlaye
     init(request: VideoPlayRequest, upNext: [VideoPlayRequest] = []) {
         self.request = request
         self.upNext = upNext
+        self.item = request.item
         self.api = ServerDirectory.shared.api(for: request.serverID)
         super.init()
     }
@@ -114,6 +124,7 @@ final class BuiltInPlaybackController: NSObject, ObservableObject, VLCMediaPlaye
 
     private func load(_ r: VideoPlayRequest) {
         request = r
+        item = r.item
         api = ServerDirectory.shared.api(for: r.serverID)
         sessionID = UUID().uuidString
         markers = r.item.markers
@@ -128,32 +139,21 @@ final class BuiltInPlaybackController: NSObject, ObservableObject, VLCMediaPlaye
         isBuffering = true
         previews = nil
 
-        guard let url = r.localURL ?? api.flatMap({ PlaybackDecider.directURL(api: $0, item: r.item) }) else {
-            errorMessage = "Server unavailable."
-            return
+        // Switch to the remembered languages first, so the file opens on them.
+        let prefs = MediaPreferences.shared, scope = preferenceScope
+        if r.localURL == nil, let api, let partID = r.item.primaryPart?.id,
+           let change = LanguagePreference.change(for: r.item.primaryPart, audio: prefs.preferredAudioLanguage(scope: scope),
+                                                  subtitle: prefs.preferredSubtitleLanguage(scope: scope)) {
+            Task {
+                try? await api.selectStreams(partID: partID, audioStreamID: change.audioStreamID, subtitleStreamID: change.subtitleStreamID)
+                let fresh = (try? await LibraryCache.$requireFresh.withValue(true) { try await api.metadata(r.item.ratingKey) }) ?? nil
+                guard !stopped, request.id == r.id else { return }
+                if let fresh { item = fresh.usingPlaybackVersion(of: r.item) }
+                open(r)
+            }
+        } else {
+            open(r)
         }
-        guard url.isFileURL || MediaPreferences.shared.streamAllowed(.watch) else {
-            errorMessage = "Watch streaming over cellular is disabled in Playback Preferences."
-            return
-        }
-        let media = VLCMedia(url: url)
-        media.addOption(":network-caching=3000")
-        if VolumeLeveling.isOn { VolumeLeveling.vlcOptions.forEach { media.addOption($0) } }
-        // DVD-era formats are usually interlaced; without this, motion shows comb lines.
-        if let codec = r.item.primaryMedia?.videoCodec?.lowercased(), ["mpeg2video", "mpeg1video", "vc1", "mpeg2"].contains(codec) {
-            media.addOption(":deinterlace=1")
-            media.addOption(":deinterlace-mode=yadif")
-        }
-        if r.startMs > 0 { media.addOption(":start-time=\(Double(r.startMs) / 1000)") }
-        // Open on the chosen audio track rather than switching once playing: switching right
-        // after a resume restarts the audio decoder mid-seek, which can leave it out of sync.
-        if let n = VLCTrackChoice.audioIndex(in: r.item) { media.addOption(":audio-track=\(n)") }
-        mediaPlayer.media = media
-        mediaPlayer.play()
-        mediaPlayer.rate = speed
-        mediaPlayer.currentAudioPlaybackDelay = audioDelayMs * 1000
-        for sub in sidecarSubtitles(r) { mediaPlayer.addPlaybackSlave(sub, type: .subtitle, enforce: false) }
-        updateNowPlaying()
 
         // Fresh metadata brings intro/credit markers.
         if r.localURL == nil || NetworkMonitor.shared.isConnected, let api {
@@ -166,13 +166,44 @@ final class BuiltInPlaybackController: NSObject, ObservableObject, VLCMediaPlaye
         }
     }
 
+    private var preferenceScope: String { MediaPreferences.scope(user: userID, server: request.serverID) }
+
+    private func open(_ r: VideoPlayRequest) {
+        guard let url = r.localURL ?? api.flatMap({ PlaybackDecider.directURL(api: $0, item: item) }) else {
+            errorMessage = "Server unavailable."
+            return
+        }
+        guard url.isFileURL || MediaPreferences.shared.streamAllowed(.watch) else {
+            errorMessage = "Watch streaming over cellular is disabled in Playback Preferences."
+            return
+        }
+        let media = VLCMedia(url: url)
+        media.addOption(":network-caching=3000")
+        if VolumeLeveling.isOn { VolumeLeveling.vlcOptions.forEach { media.addOption($0) } }
+        // DVD-era formats are usually interlaced; without this, motion shows comb lines.
+        if let codec = item.primaryMedia?.videoCodec?.lowercased(), ["mpeg2video", "mpeg1video", "vc1", "mpeg2"].contains(codec) {
+            media.addOption(":deinterlace=1")
+            media.addOption(":deinterlace-mode=yadif")
+        }
+        if r.startMs > 0 { media.addOption(":start-time=\(Double(r.startMs) / 1000)") }
+        // Open on the chosen audio track rather than switching once playing: switching right
+        // after a resume restarts the audio decoder mid-seek, which can leave it out of sync.
+        if let n = VLCTrackChoice.audioIndex(in: item) { media.addOption(":audio-track=\(n)") }
+        mediaPlayer.media = media
+        mediaPlayer.play()
+        mediaPlayer.rate = speed
+        mediaPlayer.currentAudioPlaybackDelay = audioDelayMs * 1000
+        for sub in sidecarSubtitles(r) { mediaPlayer.addPlaybackSlave(sub, type: .subtitle, enforce: false) }
+        updateNowPlaying()
+    }
+
     /// Subtitle files outside the video: the server's sidecar files, or ones saved with a download.
     private func sidecarSubtitles(_ r: VideoPlayRequest) -> [URL] {
         if r.localURL != nil, let id = r.downloadID, let rec = DownloadManager.shared.records.first(where: { $0.id == id }) {
             return rec.subtitleFiles.map { DownloadStore.directory(for: rec.id).appendingPathComponent($0.fileName) }
         }
         guard let api else { return [] }
-        return (r.item.primaryPart?.subtitleStreams ?? []).compactMap { s in
+        return (item.primaryPart?.subtitleStreams ?? []).compactMap { s in
             s.key.map { api.url($0, query: PlexClient.queryItems(token: api.token)) }
         }
     }
@@ -189,6 +220,22 @@ final class BuiltInPlaybackController: NSObject, ObservableObject, VLCMediaPlaye
     }
     func selectAudio(_ id: Int32) { mediaPlayer.currentAudioTrackIndex = id; currentAudio = id }
     func selectSubtitle(_ id: Int32) { mediaPlayer.currentVideoSubTitleIndex = id; currentSubtitle = id }
+
+    /// The viewer picked this in the menu: it's also remembered for what plays next.
+    func chooseAudio(_ id: Int32) {
+        selectAudio(id)
+        guard let part = item.primaryPart, let n = audioTracks.firstIndex(where: { $0.id == id }),
+              let code = VLCTrackChoice.audioLanguage(atPosition: n, in: part) else { return }
+        MediaPreferences.shared.rememberAudio(languageCode: code, scope: preferenceScope)
+    }
+
+    func chooseSubtitle(_ id: Int32) {
+        selectSubtitle(id)
+        if id < 0 { return MediaPreferences.shared.rememberSubtitle(languageCode: nil, scope: preferenceScope) }
+        guard let part = item.primaryPart, let n = subtitleTracks.firstIndex(where: { $0.id == id }),
+              let code = VLCTrackChoice.subtitleLanguage(atPosition: n, in: part) else { return }
+        MediaPreferences.shared.rememberSubtitle(languageCode: code, scope: preferenceScope)
+    }
 
     func performSkip() {
         guard let skipTarget else { return }
@@ -230,7 +277,7 @@ final class BuiltInPlaybackController: NSObject, ObservableObject, VLCMediaPlaye
             isPlaying = false
             report(force: true)
         case .buffering:
-            if !mediaPlayer.isPlaying { isBuffering = true }
+            if !mediaPlayer.isPlaying, !isBuffering { isBuffering = true }
         case .esAdded:
             refreshTracks()
         case .ended:
@@ -248,7 +295,7 @@ final class BuiltInPlaybackController: NSObject, ObservableObject, VLCMediaPlaye
         guard !stopped else { return }
         timeMs = Int(mediaPlayer.time.intValue)
         if let length = mediaPlayer.media?.length.intValue, length > 0 { durationMs = Int(length) }
-        isBuffering = false
+        if isBuffering { isBuffering = false }
         updateSkip()
         report(force: false)
     }
@@ -268,7 +315,7 @@ final class BuiltInPlaybackController: NSObject, ObservableObject, VLCMediaPlaye
 
     /// Starts on the audio and subtitle tracks chosen in Plex (matched by position in the file).
     private func applyPlexTrackChoices() {
-        guard !tracksApplied, !audioTracks.isEmpty, let part = request.item.primaryPart else { return }
+        guard !tracksApplied, !audioTracks.isEmpty, let part = item.primaryPart else { return }
         tracksApplied = true
         let audio = part.audioStreams
         // Usually already open on it (see load); only switch when VLC picked another.
@@ -287,13 +334,10 @@ final class BuiltInPlaybackController: NSObject, ObservableObject, VLCMediaPlaye
     }
 
     private func updateSkip() {
-        if let m = markers.first(where: { ["intro", "credits"].contains($0.type) && timeMs >= $0.startTimeOffset && timeMs < $0.endTimeOffset - 1000 }) {
-            skipLabel = m.type == "intro" ? "Skip Intro" : "Skip Credits"
-            skipTarget = m.endTimeOffset
-        } else {
-            skipLabel = nil
-            skipTarget = nil
-        }
+        let m = markers.first { ["intro", "credits"].contains($0.type) && timeMs >= $0.startTimeOffset && timeMs < $0.endTimeOffset - 1000 }
+        let label = m.map { $0.type == "intro" ? "Skip Intro" : "Skip Credits" }
+        if label != skipLabel { skipLabel = label }
+        skipTarget = m?.endTimeOffset
     }
 
     private func finishItem() async {
@@ -465,7 +509,6 @@ struct BuiltInPlayerControls: View {
     let close: () -> Void
     let setZoom: (_ zoom: CGFloat, _ fill: Bool) -> Void
     @State private var visible = true
-    @State private var scrubMs: Double?
     @State private var fill = false
     @State private var zoom: CGFloat = 1
     /// Zoom when the pinch began.
@@ -549,16 +592,16 @@ struct BuiltInPlayerControls: View {
             if playback.audioTracks.count > 1 {
                 Menu {
                     ForEach(playback.audioTracks) { t in
-                        Button { playback.selectAudio(t.id) } label: { checkLabel(t.name, on: t.id == playback.currentAudio) }
+                        Button { playback.chooseAudio(t.id) } label: { checkLabel(t.name, on: t.id == playback.currentAudio) }
                     }
                 } label: { Image(systemName: "speaker.wave.2").font(.title3) }
                 .accessibilityLabel("Audio")
             }
             if !playback.subtitleTracks.isEmpty {
                 Menu {
-                    Button { playback.selectSubtitle(-1) } label: { checkLabel("Off", on: playback.currentSubtitle < 0) }
+                    Button { playback.chooseSubtitle(-1) } label: { checkLabel("Off", on: playback.currentSubtitle < 0) }
                     ForEach(playback.subtitleTracks) { t in
-                        Button { playback.selectSubtitle(t.id) } label: { checkLabel(t.name, on: t.id == playback.currentSubtitle) }
+                        Button { playback.chooseSubtitle(t.id) } label: { checkLabel(t.name, on: t.id == playback.currentSubtitle) }
                     }
                 } label: { Image(systemName: "captions.bubble").font(.title3) }
                 .accessibilityLabel("Subtitles")
@@ -604,53 +647,9 @@ struct BuiltInPlayerControls: View {
     }
 
     private var scrubber: some View {
-        let duration = Double(max(playback.durationMs, 1))
-        let shown = scrubMs ?? Double(playback.timeMs)
-        return VStack(spacing: 4) {
-            // A drawn bar: the system slider's track is nearly invisible over black video.
-            GeometryReader { geo in
-                let fraction = min(max(shown / duration, 0), 1)
-                ZStack(alignment: .leading) {
-                    if let scrubMs, let previews = playback.previews {
-                        ScrubPreviewThumbnail(previews: previews, ms: Int(scrubMs))
-                            .offset(x: min(max(geo.size.width * fraction - 90, 0), max(geo.size.width - 180, 0)), y: -80)
-                            .allowsHitTesting(false)
-                    }
-                    Capsule().fill(.white.opacity(0.3)).frame(height: scrubMs == nil ? 4 : 8)
-                    Capsule().fill(Cinema.accent).frame(width: geo.size.width * fraction, height: scrubMs == nil ? 4 : 8)
-                    Circle().fill(.white).frame(width: 16, height: 16)
-                        .offset(x: geo.size.width * fraction - 8)
-                }
-                .frame(maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 0)
-                    .onChanged { g in
-                        hideTask?.cancel()
-                        scrubMs = min(max(g.location.x / geo.size.width, 0), 1) * duration
-                    }
-                    .onEnded { _ in
-                        if let s = scrubMs { playback.seek(toMs: Int(s)) }
-                        scrubMs = nil
-                        scheduleHide()
-                    })
-            }
-            .frame(height: 28)
-            .animation(.easeOut(duration: 0.15), value: scrubMs == nil)
-            .accessibilityElement()
-            .accessibilityLabel("Position")
-            .accessibilityValue(Fmt.clock(seconds: shown / 1000))
-            .accessibilityAdjustableAction { direction in
-                playback.skip(seconds: direction == .increment ? 10 : -10)
-            }
-            HStack {
-                Text(Fmt.clock(seconds: shown / 1000))
-                Spacer()
-                Text("-" + Fmt.clock(seconds: max(0, duration - shown) / 1000))
-            }
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.white.opacity(0.8))
-        }
-        .opacity(playback.errorMessage == nil ? 1 : 0)
+        BuiltInScrubber(clock: playback.clock, previews: playback.previews, skip: { playback.skip(seconds: $0) },
+                        seek: { playback.seek(toMs: $0) }, scrubbing: { hideTask?.cancel() }, finished: { scheduleHide() })
+            .opacity(playback.errorMessage == nil ? 1 : 0)
     }
 
     @ViewBuilder
@@ -674,6 +673,66 @@ struct BuiltInPlayerControls: View {
             try? await Task.sleep(for: .seconds(4))
             guard !Task.isCancelled, playback.isPlaying else { return }
             visible = false
+        }
+    }
+}
+
+/// The position bar and times; the only part that redraws as playback moves.
+private struct BuiltInScrubber: View {
+    @ObservedObject var clock: BuiltInPlaybackClock
+    let previews: ScrubPreviews?
+    let skip: (Int) -> Void
+    let seek: (Int) -> Void
+    let scrubbing: () -> Void
+    let finished: () -> Void
+    @State private var scrubMs: Double?
+
+    var body: some View {
+        let duration = Double(max(clock.durationMs, 1))
+        let shown = scrubMs ?? Double(clock.timeMs)
+        VStack(spacing: 4) {
+            // A drawn bar: the system slider's track is nearly invisible over black video.
+            GeometryReader { geo in
+                let fraction = min(max(shown / duration, 0), 1)
+                ZStack(alignment: .leading) {
+                    if let scrubMs, let previews {
+                        ScrubPreviewThumbnail(previews: previews, ms: Int(scrubMs))
+                            .offset(x: min(max(geo.size.width * fraction - 90, 0), max(geo.size.width - 180, 0)), y: -80)
+                            .allowsHitTesting(false)
+                    }
+                    Capsule().fill(.white.opacity(0.3)).frame(height: scrubMs == nil ? 4 : 8)
+                    Capsule().fill(Cinema.accent).frame(width: geo.size.width * fraction, height: scrubMs == nil ? 4 : 8)
+                    Circle().fill(.white).frame(width: 16, height: 16)
+                        .offset(x: geo.size.width * fraction - 8)
+                }
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0)
+                    .onChanged { g in
+                        scrubbing()
+                        scrubMs = min(max(g.location.x / geo.size.width, 0), 1) * duration
+                    }
+                    .onEnded { _ in
+                        if let s = scrubMs { seek(Int(s)) }
+                        scrubMs = nil
+                        finished()
+                    })
+            }
+            .frame(height: 28)
+            .animation(.easeOut(duration: 0.15), value: scrubMs == nil)
+            .accessibilityElement()
+            .accessibilityLabel("Position")
+            .accessibilityValue(Fmt.clock(seconds: shown / 1000))
+            .accessibilityAdjustableAction { direction in
+                skip(direction == .increment ? 10 : -10)
+            }
+            HStack {
+                Text(Fmt.clock(seconds: shown / 1000))
+                Spacer()
+                Text("-" + Fmt.clock(seconds: max(0, duration - shown) / 1000))
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.white.opacity(0.8))
         }
     }
 }

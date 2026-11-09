@@ -18,7 +18,7 @@ enum ConnectionResolver {
         let best: Result? = await withTaskGroup(of: Outcome.self) { group in
             for conn in candidates {
                 group.addTask {
-                    let ok = await probe(uri: conn.uri, token: server.accessToken, timeout: conn.local ? 4 : 8,
+                    let ok = await probe(uri: conn.uri, timeout: conn.local ? 4 : 8,
                                          expectedID: server.isManual && !server.isJellyfin ? nil : server.clientIdentifier)
                     return ok ? .answered(Result(uri: conn.uri, rank: conn.rank)) : .failed
                 }
@@ -53,13 +53,14 @@ enum ConnectionResolver {
         return best.uri
     }
 
-    static func probe(uri: String, token: String?, timeout: TimeInterval, expectedID: String?) async -> Bool {
+    /// `/identity` needs no sign-in, so the token isn't sent to an address not yet known to be this server.
+    static func probe(uri: String, timeout: TimeInterval, expectedID: String?) async -> Bool {
         if let expectedID, expectedID.hasPrefix(JellyfinBridge.idPrefix) {
             return await probeJellyfin(uri: uri, timeout: timeout, expectedID: String(expectedID.dropFirst(JellyfinBridge.idPrefix.count)))
         }
         guard let url = URL(string: uri)?.appendingPathComponent("identity") else { return false }
         var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
-        PlexClient.headers(token: token).forEach { req.setValue($1, forHTTPHeaderField: $0) }
+        PlexClient.headers(token: nil).forEach { req.setValue($1, forHTTPHeaderField: $0) }
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard (resp as? HTTPURLResponse)?.statusCode == 200 else { return false }

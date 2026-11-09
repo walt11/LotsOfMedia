@@ -7,7 +7,8 @@ actor ImageLoader {
     static let shared = ImageLoader()
 
     private nonisolated let memory = ImageMemoryCache()
-    private var inflight: [URL: Task<UIImage?, Never>] = [:]
+    /// Downloads under way, with how many views still want each one.
+    private var inflight: [URL: (task: Task<UIImage?, Never>, waiters: Int)] = [:]
     private let session: URLSession = {
         let config = URLSessionConfiguration.default
         // Decoded images live in `memory`; the URL cache only needs disk. Server-side
@@ -35,22 +36,43 @@ actor ImageLoader {
 
     func image(for url: URL) async -> UIImage? {
         if let img = memory.object(forKey: url as NSURL) { return img }
-        if let task = inflight[url] { return await task.value }
-        let session = self.session
-        // Detached: download and decode in parallel, not one at a time on this actor.
-        let task = Task.detached(priority: .userInitiated) { () -> UIImage? in
-            guard let (data, resp) = try? await session.data(from: url),
-                  (resp as? HTTPURLResponse)?.statusCode ?? 200 < 400,
-                  let image = UIImage(data: data) else { return nil }
-            return image.preparingForDisplay() ?? image
+        let task: Task<UIImage?, Never>
+        if let running = inflight[url] {
+            task = running.task
+            inflight[url]?.waiters += 1
+        } else {
+            let session = self.session
+            // Detached: download and decode in parallel, not one at a time on this actor.
+            task = Task.detached(priority: .userInitiated) { () -> UIImage? in
+                guard let (data, resp) = try? await session.data(from: url),
+                      (resp as? HTTPURLResponse)?.statusCode ?? 200 < 400,
+                      let image = UIImage(data: data) else { return nil }
+                return image.preparingForDisplay() ?? image
+            }
+            inflight[url] = (task, 1)
         }
-        inflight[url] = task
-        let image = await task.value
-        inflight[url] = nil
+        // A poster scrolled off screen gives up its place, so the ones now showing aren't kept waiting.
+        let image = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            Task { await self.release(url, task: task) }
+        }
+        if inflight[url]?.task == task { inflight[url] = nil }
         if let image {
             memory.setObject(image, forKey: url as NSURL, cost: Int(image.size.width * image.size.height * image.scale * image.scale * 4))
         }
         return image
+    }
+
+    /// One view no longer wants this download; with none left, it stops.
+    private func release(_ url: URL, task: Task<UIImage?, Never>) {
+        guard let running = inflight[url], running.task == task else { return }
+        if running.waiters > 1 {
+            inflight[url]?.waiters -= 1
+        } else {
+            task.cancel()
+            inflight[url] = nil
+        }
     }
 }
 
@@ -139,7 +161,14 @@ extension UIImage {
 /// NSCache synchronizes its own access; expose only its thread-safe operations.
 private final class ImageMemoryCache: @unchecked Sendable {
     private let cache = NSCache<NSURL, UIImage>()
-    init() { cache.totalCostLimit = 96 * 1024 * 1024 }
+    init() {
+        #if os(tvOS)
+        // TV artwork is larger, and a Home screen holds many rows of it.
+        cache.totalCostLimit = 256 * 1024 * 1024
+        #else
+        cache.totalCostLimit = 96 * 1024 * 1024
+        #endif
+    }
     func object(forKey key: NSURL) -> UIImage? { cache.object(forKey: key) }
     func setObject(_ image: UIImage, forKey key: NSURL, cost: Int) { cache.setObject(image, forKey: key, cost: cost) }
 }

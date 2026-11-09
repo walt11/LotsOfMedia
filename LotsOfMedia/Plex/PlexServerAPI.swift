@@ -503,14 +503,16 @@ extension PlexServerAPI {
         if let cached = HolidayCache.shared.get(cacheKey) { return cached }
         let videoKinds: Set<PlexMetadata.Kind> = [.movie, .show, .episode]
         // Movies and TV only: not home videos (an Other Videos library, or Jellyfin's home videos).
-        let libraries = ((try? await sections()) ?? []).filter(Self.isMovieOrTVLibrary)
+        let allSections = try? await sections()
+        let libraries = (allSections ?? []).filter(Self.isMovieOrTVLibrary)
         let libraryIDs = Set(libraries.compactMap { Int($0.key) })
-        let found = await withTaskGroup(of: (Int, [PlexMetadata]).self) { group in
+        // A search that failed (or was cancelled by Home reloading) comes back nil.
+        let (found, searchedAll) = await withTaskGroup(of: (Int, [PlexMetadata]?).self) { group -> ([PlexMetadata], Bool) in
             for (i, word) in holiday.keywords.enumerated() {
                 group.addTask {
-                    let hubs = (try? await container("/hubs/search", query: [
+                    guard let hubs = try? await container("/hubs/search", query: [
                         URLQueryItem(name: "query", value: word), URLQueryItem(name: "limit", value: "30"),
-                    ]).hubs) ?? []
+                    ]).hubs else { return (i, nil) }
                     // The server's search is fuzzy; keep what really has the word in its title.
                     return (i, hubs.filter { $0.hubIdentifier != "search.video" }.flatMap(\.metadata).filter { item in
                         videoKinds.contains(item.kind) && holiday.matches(item)
@@ -518,9 +520,9 @@ extension PlexServerAPI {
                     })
                 }
             }
-            var byWord: [(Int, [PlexMetadata])] = []
+            var byWord: [(Int, [PlexMetadata]?)] = []
             for await result in group { byWord.append(result) }
-            return byWord.sorted { $0.0 < $1.0 }.flatMap(\.1)
+            return (byWord.sorted { $0.0 < $1.0 }.flatMap { $0.1 ?? [] }, byWord.allSatisfy { $0.1 != nil })
         }
         var seen = Set<String>()
         var picks = found.filter { seen.insert($0.ratingKey).inserted }
@@ -541,7 +543,8 @@ extension PlexServerAPI {
             return (rank(a.element), a.offset) < (rank(b.element), b.offset)
         }.map(\.element)
         let result = Array(ordered.prefix(limit))
-        HolidayCache.shared.set(cacheKey, result)
+        // Only a complete answer is kept for the day; anything else is searched again next time.
+        if searchedAll, allSections != nil, !Task.isCancelled { HolidayCache.shared.set(cacheKey, result) }
         return result
     }
 

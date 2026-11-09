@@ -420,10 +420,10 @@ final class TVMusicPlayer {
     /// server change can't send this account's progress to another.
     private func finishCurrent(scrobble: Bool) {
         guard let item = current, let api = session?.api else { return }
-        let time = scrobble ? (item.duration ?? timeMs) : timeMs, id = sessionID, wasTranscoding = transcoding
+        let time = timeMs, id = sessionID, wasTranscoding = transcoding
         Task {
-            await TVPlaybackReporting.report(item, state: "stopped", timeMs: time, sessionID: id, api: api)
-            if scrobble { try? await api.scrobble(item.ratingKey) }
+            if scrobble { await TVPlaybackReporting.reportFinished(item, sessionID: id, api: api, fallbackMs: time) }
+            else { await TVPlaybackReporting.report(item, state: "stopped", timeMs: time, sessionID: id, api: api) }
             if wasTranscoding { await api.stopTranscode(sessionID: id) }
         }
     }

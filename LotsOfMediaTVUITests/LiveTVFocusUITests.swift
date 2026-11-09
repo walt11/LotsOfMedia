@@ -135,4 +135,20 @@ final class LivePlayPauseUITests: XCTestCase {
         XCUIRemote.shared.press(.playPause)   // play
         sleep(6)
     }
+
+    /// Leaving for the Home Screen pauses the channel (read from the log); a quick return resumes it.
+    func testHomeScreenPausesTheChannel() throws {
+        guard let stream = ProcessInfo.processInfo.environment["LIVE_URL"] else {
+            throw XCTSkip("Set LIVE_URL to a live HLS fixture (tools/live_seek_fixture.py).")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["-proUnlocked", "-tvLiveSample", "-tvTab", "live", "-tvMiniSample",
+                               "-tvLiveURL", stream, "-tvLiveDiagnostics", "-tvLiveFull"]
+        app.launch()
+        sleep(10)
+        XCUIRemote.shared.press(.home)
+        sleep(6)
+        app.activate()
+        sleep(6)
+    }
 }

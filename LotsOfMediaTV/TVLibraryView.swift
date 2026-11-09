@@ -18,7 +18,9 @@ struct TVLibraryView: View {
     @State private var loadedKey = ""
     @State private var items: [PlexMetadata] = []
     @State private var total: Int?
-    @State private var loading = false
+    /// A page requested for a list that's since changed is dropped, and doesn't hold up the new list.
+    @State private var paging = PageRequestState()
+    private var loading: Bool { paging.isLoading }
     @FocusState private var focusedItem: String?
 
     static let playlistsKey = "playlists"
@@ -70,6 +72,7 @@ struct TVLibraryView: View {
                 }
             }
         }
+        .task(id: session.status == .connected) { if session.sections.isEmpty { await session.refreshSections() } }
         .task(id: "\(sectionKey ?? "")-\(session.contentVersion)") { await loadFilters() }
         .task(id: "\(listKey)-\(session.contentVersion)") {
             // Same list, just fresher (back from watching something): update it in place so the
@@ -249,12 +252,14 @@ struct TVLibraryView: View {
 
     private func reload() async {
         items = []; total = nil; letters = []
+        paging.reset()
         if isPlaylists {
-            guard let api = session.api else { return }
-            loading = true
-            items = ((try? await api.playlists()) ?? []).filter { $0.playlistType != "photo" }
-            total = items.count
-            loading = false
+            guard let api = session.api, let request = paging.begin() else { return }
+            defer { paging.finish(request) }
+            let lists = ((try? await api.playlists()) ?? []).filter { $0.playlistType != "photo" }
+            guard request == paging.generation else { return }
+            items = lists
+            total = lists.count
             return
         }
         await loadMore()
@@ -274,19 +279,21 @@ struct TVLibraryView: View {
         }
     }
 
-    private func loadMore() async {
-        guard !isPlaylists, let api = session.api, let section, !loading, total.map({ items.count < $0 }) ?? true else { return }
-        loading = true
-        defer { loading = false }
+    /// `size`: how many to fetch, when more than a page is needed at once.
+    private func loadMore(size: Int? = nil) async {
+        guard !isPlaylists, let api = session.api, let section, total.map({ items.count < $0 }) ?? true,
+              let request = paging.begin() else { return }
+        defer { paging.finish(request) }
         let key = section.key, mode = view
         let path = mode == .collections ? "/library/sections/\(key)/collections" : "/library/sections/\(key)/all"
         // Photos: newest first, albums and photos together.
         var query = [URLQueryItem(name: "sort", value: section.type == "photo" ? "originallyAvailableAt:desc" : mode == .collections ? "titleSort" : sort.key)]
         if mode == .all { query += filterQuery }
-        guard let page = try? await api.page(path, start: items.count, size: pageSize, query: query),
-              key == self.section?.key, mode == view else { return }
+        let count = size ?? pageSize
+        guard let page = try? await api.page(path, start: items.count, size: count, query: query),
+              request == paging.generation else { return }
         items += page.metadata
-        total = page.totalSize ?? (page.metadata.count < pageSize ? items.count : nil)
+        total = page.totalSize ?? (page.metadata.count < count ? items.count : nil)
     }
 
     /// Loads pages up to the letter's first item, then moves focus (and the grid) there.
@@ -294,7 +301,8 @@ struct TVLibraryView: View {
         let offset = letters.prefix { $0 != letter }.reduce(0) { $0 + $1.size }
         while items.count <= offset, total.map({ items.count < $0 }) ?? true {
             let before = items.count
-            await loadMore()
+            // Everything up to the letter in one request (or a few, in a very large library).
+            await loadMore(size: min(max(offset + pageSize - before, pageSize), 2000))
             if items.count == before { break }
         }
         guard items.indices.contains(offset) else { return }

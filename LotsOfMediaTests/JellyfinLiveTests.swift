@@ -57,7 +57,7 @@ final class JellyfinLiveTests: XCTestCase {
     func testSignInAndConnection() async throws {
         XCTAssertTrue(server.isJellyfin)
         XCTAssertNotNil(server.jellyfinUserID)
-        let ok = await ConnectionResolver.probe(uri: Self.address, token: nil, timeout: 5, expectedID: server.id)
+        let ok = await ConnectionResolver.probe(uri: Self.address, timeout: 5, expectedID: server.id)
         XCTAssertTrue(ok)
         let resolved = try await ConnectionResolver.resolve(server)
         XCTAssertEqual(resolved, Self.address)

@@ -206,6 +206,17 @@ enum VLCTrackChoice {
               let n = part.audioStreams.firstIndex(where: { $0.id == chosen.id }), n > 0 else { return nil }
         return n
     }
+
+    /// The Plex language of the audio track at this position in VLC's list, to remember a choice.
+    static func audioLanguage(atPosition n: Int, in part: PlexPart) -> String? {
+        part.audioStreams.indices.contains(n) ? part.audioStreams[n].languageCode : nil
+    }
+
+    /// The same for subtitles. VLC lists the file's own tracks first, then the added sidecar files.
+    static func subtitleLanguage(atPosition n: Int, in part: PlexPart) -> String? {
+        let ordered = part.subtitleStreams.filter { $0.key == nil } + part.subtitleStreams.filter { $0.key != nil }
+        return ordered.indices.contains(n) ? ordered[n].languageCode : nil
+    }
 }
 
 /// Even Out Volume: the built-in player levels loud and quiet videos (and loud scenes against

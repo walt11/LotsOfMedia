@@ -137,6 +137,22 @@ final class FeatureBatchTests: XCTestCase {
 
     // MARK: Languages
 
+    func testVLCMenuChoicesMapToPlexLanguages() throws {
+        let part = try JSONDecoder().decode(PlexPart.self, from: Data(#"""
+        {"id": 1, "Stream": [
+          {"id": 10, "streamType": 2, "languageCode": "eng"},
+          {"id": 11, "streamType": 2, "languageCode": "spa"},
+          {"id": 20, "streamType": 3, "languageCode": "fra", "key": "/library/streams/20"},
+          {"id": 21, "streamType": 3, "languageCode": "deu"}
+        ]}
+        """#.utf8))
+        XCTAssertEqual(VLCTrackChoice.audioLanguage(atPosition: 1, in: part), "spa")
+        XCTAssertNil(VLCTrackChoice.audioLanguage(atPosition: 2, in: part))
+        // VLC lists the file's own subtitles first, whatever order Plex gives them in.
+        XCTAssertEqual(VLCTrackChoice.subtitleLanguage(atPosition: 0, in: part), "deu")
+        XCTAssertEqual(VLCTrackChoice.subtitleLanguage(atPosition: 1, in: part), "fra")
+    }
+
     func testLanguagePreferencePicksMatchingStreams() throws {
         let part = try JSONDecoder().decode(PlexPart.self, from: Data(#"""
         {"id": 1, "Stream": [

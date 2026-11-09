@@ -920,7 +920,7 @@ final class TVLiveNow {
         // a channel again — rather than waiting on a stream that may not come back.
         backgroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
                                                                     object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.wentToBackground = Date() }
+            MainActor.assumeIsolated { self?.appDidEnterBackground() }
         }
         // The screen saver (or Control Center) only makes the app inactive: the corner window
         // would keep playing under it. It pauses, picks up again after a quick look away, and
@@ -936,15 +936,31 @@ final class TVLiveNow {
         }
         foregroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification,
                                                                     object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, let controller = self.controller else { return }
-                let away = self.wentToBackground.map { Date().timeIntervalSince($0) } ?? 0
-                self.wentToBackground = nil
-                if away > 15 || controller.player.currentItem?.status == .failed || controller.player.timeControlStatus != .playing {
-                    self.stop()
-                }
-            }
+            MainActor.assumeIsolated { self?.appWillEnterForeground() }
         }
+    }
+
+    /// At the Home Screen: the channel pauses, full screen too. (The app may play audio in the
+    /// background for music, so it would otherwise be heard there.)
+    func appDidEnterBackground(at date: Date = Date()) {
+        wentToBackground = date
+        guard let controller, controller.player.rate != 0 else { return }
+        holdForBackground()
+    }
+
+    /// Paused for being away, not by the viewer: picks up again on a quick return.
+    func holdForBackground() {
+        controller?.player.pause()
+        if pausedInactive == nil { pausedInactive = wentToBackground ?? Date() }
+    }
+
+    /// Back from the Home Screen: after a long time away (or a failed stream) the channel closes;
+    /// otherwise `appDidBecomeActive` picks it up.
+    func appWillEnterForeground(at date: Date = Date()) {
+        guard let controller else { return }
+        let away = wentToBackground.map { date.timeIntervalSince($0) } ?? 0
+        wentToBackground = nil
+        if away > 15 || controller.player.currentItem?.status == .failed { stop() }
     }
 
     /// The screen saver is coming over the app: the corner window pauses (full screen plays on).
@@ -1477,6 +1493,8 @@ final class TVLivePlaybackController: NSObject {
                 item.preferredForwardBufferDuration = 6
                 player.replaceCurrentItem(with: item)
                 player.play()
+                // Finished tuning after the app was left.
+                if UIApplication.shared.applicationState == .background { TVLiveNow.shared.holdForBackground() }
             } catch {
                 guard !Task.isCancelled, !stopped else { return }
                 showError(error.localizedDescription.localizedCaseInsensitiveContains("tune")

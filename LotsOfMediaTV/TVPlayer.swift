@@ -48,6 +48,15 @@ enum TVPlaybackReporting {
         }
     }
 
+    /// The item played to its end: stopped at its end and marked watched, once. (The report itself
+    /// marks it watched when the duration is known; without one, `fallbackMs` is the last position.)
+    static func reportFinished(_ item: PlexMetadata?, sessionID: String, api: PlexServerAPI?, fallbackMs: Int = 0) async {
+        guard let item, let api else { return }
+        let duration = item.duration ?? 0
+        await report(item, state: "stopped", timeMs: duration > 0 ? duration : fallbackMs, sessionID: sessionID, api: api)
+        if duration <= 0 { try? await api.scrobble(item.ratingKey) }
+    }
+
     /// Subtitle the server should burn into a converted stream: one Apple's player can't show itself.
     static func burnSubtitleID(for item: PlexMetadata) -> Int? {
         guard let sub = item.primaryPart?.selectedSubtitle else { return nil }
@@ -108,6 +117,7 @@ final class TVPlaybackController: NSObject {
     private var lastReport = Date.distantPast
     private var stopped = false
     private var sleepObserver: NSObjectProtocol?
+    private var backgroundObserver: NSObjectProtocol?
     /// The newest load; an older one finishing late is ignored.
     private var loadID = UUID()
     private var statusObservation: NSKeyValueObservation?
@@ -123,6 +133,8 @@ final class TVPlaybackController: NSObject {
     private var languageScope = ""
     /// The player's audio/subtitle choice once it settled; a later change is the viewer's, and is remembered.
     private var languageBaseline: (audio: String?, subtitle: String?)?
+    /// Where the current stream was asked to start: a stream that fails before opening retries from here.
+    private var requestedStartMs: Int?
     private var selectionObserver: NSObjectProtocol?
 
     init(request: TVPlayRequest, session: TVSession, onFinish: @escaping () -> Void) {
@@ -132,6 +144,7 @@ final class TVPlaybackController: NSObject {
         self.session = session
         self.onFinish = onFinish
         super.init()
+        player.audiovisualBackgroundPlaybackPolicy = .pauses
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         TVAudioOutput.applyChannelLimit()
     }
@@ -145,6 +158,10 @@ final class TVPlaybackController: NSObject {
         sleepObserver = NotificationCenter.default.addObserver(forName: .tvSleepTimerFired, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.player.pause() }
         }
+        // The app may play audio in the background for music; a video stops when it's left.
+        backgroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pauseForBackground() }
+        }
         Task { await load(index, resume: resumeFirst) }
     }
 
@@ -153,6 +170,7 @@ final class TVPlaybackController: NSObject {
         stopped = true
         player.pause()
         if let sleepObserver { NotificationCenter.default.removeObserver(sleepObserver) }
+        if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         if let selectionObserver { NotificationCenter.default.removeObserver(selectionObserver) }
@@ -162,6 +180,13 @@ final class TVPlaybackController: NSObject {
             if wasTranscoding, let api = session.api { await api.stopTranscode(sessionID: id) }
             session.contentVersion += 1
         }
+    }
+
+    private func pauseForBackground() {
+        guard !stopped, player.rate != 0 else { return }
+        player.pause()
+        let item = current, time = currentMs, id = sessionID
+        Task { [session] in await Self.report(item, state: "paused", timeMs: time, sessionID: id, session: session) }
     }
 
     private var currentMs: Int {
@@ -192,6 +217,7 @@ final class TVPlaybackController: NSObject {
         }
         let item = loaded
         current = item
+        requestedStartMs = startAtMs ?? (resume ? item.viewOffset : nil)
         let previousSession = sessionID, wasTranscoding = transcoding
         sessionID = UUID().uuidString
         // A conversion being replaced (a retry) is ended on the server.
@@ -244,6 +270,8 @@ final class TVPlaybackController: NSObject {
         // Closed (or replaced by a newer load) while seeking: don't start playing again.
         guard !stopped, id == loadID, player.currentItem === avItem else { return }
         player.play()
+        // Finished loading after the app was left.
+        if UIApplication.shared.applicationState == .background { player.pause() }
         lastReport = .distantPast
 
         // Chapters in the player's info panel, each with its picture (or the preview frame there).
@@ -294,7 +322,7 @@ final class TVPlaybackController: NSObject {
     /// fails too, say so and offer to try again.
     private func playbackFailed(_ error: Error?) {
         guard !stopped, current != nil else { return }
-        let position = currentMs > 0 ? currentMs : nil
+        let position = currentMs > 0 ? currentMs : requestedStartMs
         // A conversion the server ended (paused a long time, or the app was away): start a new one
         // at the same point, quietly, once.
         if transcoding && !restartedConversion {
@@ -386,11 +414,10 @@ final class TVPlaybackController: NSObject {
     }
 
     private func finishCurrent() {
-        let finished = current, id = sessionID, wasTranscoding = transcoding
-        Task { [session] in
-            await Self.report(finished, state: "stopped", timeMs: finished?.duration ?? 0, sessionID: id, session: session)
-            if let finished, let api = session.api { try? await api.scrobble(finished.ratingKey) }
-            if wasTranscoding, let api = session.api { await api.stopTranscode(sessionID: id) }
+        let finished = current, id = sessionID, wasTranscoding = transcoding, api = session.api
+        Task {
+            await TVPlaybackReporting.reportFinished(finished, sessionID: id, api: api)
+            if wasTranscoding, let api { await api.stopTranscode(sessionID: id) }
         }
         current = nil
     }

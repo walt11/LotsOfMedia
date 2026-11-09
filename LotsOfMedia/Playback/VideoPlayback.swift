@@ -73,6 +73,8 @@ final class VideoPlaybackController: ObservableObject, VideoQueueing {
     private var restartedConversion = false
     /// The current stream opened at least once (a failure later is the server ending it, not a format problem).
     private var streamOpened = false
+    /// Where the current stream starts; until it gets there, the position reads zero.
+    private var loadStartMs = 0
     /// A conversion failed before it ever opened: ask the server for H.264 instead of copying HEVC.
     private var avoidHEVC = false
     private var timeObserver: Any?
@@ -315,6 +317,7 @@ final class VideoPlaybackController: ObservableObject, VideoQueueing {
     private func load(url: URL, start: Int) {
         itemCancellables.removeAll()
         streamOpened = false
+        loadStartMs = start
         guard url.isFileURL || MediaPreferences.shared.streamAllowed(.watch) else { errorMessage = "Watch streaming over cellular is disabled in Playback Preferences."; return }
         let asset = AVURLAsset(url: url, options: [AVURLAssetAllowsCellularAccessKey: MediaPreferences.shared.allowsCellular(.watch)])
         let item = AVPlayerItem(asset: asset)
@@ -355,7 +358,8 @@ final class VideoPlaybackController: ObservableObject, VideoQueueing {
             restartedConversion = true
             if !streamOpened { avoidHEVC = true }
             let resume = Int((player.currentTime().seconds.isFinite ? player.currentTime().seconds : 0) * 1000)
-            startTranscode(api: api, start: max(resume, 0), burn: burnSubtitleID)
+            // Failed before it opened: the position is still zero, so go back to where it was starting.
+            startTranscode(api: api, start: resume > 0 ? resume : loadStartMs, burn: burnSubtitleID)
             return
         }
         // Direct play failed (unexpected codec/profile): retry via the transcoder.
@@ -646,9 +650,11 @@ final class VideoPlaybackController: ObservableObject, VideoQueueing {
         guard !stopped, player.currentItem != nil else { return nil }
         let state = explicit ?? (player.timeControlStatus == .playing ? "playing" : (player.timeControlStatus == .paused ? "paused" : "buffering"))
         guard force || state != lastState else { return nil }
+        let pos = positionMs, dur = durationMs
+        // Still opening at a resume point: a report now would replace the saved position with zero.
+        if pos == 0, loadStartMs > 0 { return nil }
         lastState = state
         lastReported = Date()
-        let pos = positionMs, dur = durationMs
         if let id = request.downloadID {
             DownloadManager.shared.recordOfflineProgress(id, positionMs: pos, durationMs: dur, userID: userID)
         }

@@ -199,6 +199,28 @@ struct ChannelMenuItems: View {
     }
 }
 
+/// Guide artwork through the app's image cache, so rows scrolling back don't fetch it again.
+private struct CachedArtwork<Content: View, Placeholder: View>: View {
+    let url: URL?
+    @ViewBuilder let content: (Image) -> Content
+    @ViewBuilder let placeholder: () -> Placeholder
+    @State private var loaded: (url: URL, image: UIImage)?
+
+    var body: some View {
+        Group {
+            if let shown = loaded.flatMap({ $0.url == url ? $0.image : nil }) ?? url.flatMap({ ImageLoader.shared.cached($0) }) {
+                content(Image(uiImage: shown))
+            } else {
+                placeholder()
+            }
+        }
+        .task(id: url) {
+            guard let url, ImageLoader.shared.cached(url) == nil, let image = await ImageLoader.shared.image(for: url) else { return }
+            loaded = (url, image)
+        }
+    }
+}
+
 struct ChannelLogo: View {
     let channel: LiveChannel
     var size: CGFloat = 44
@@ -207,7 +229,7 @@ struct ChannelLogo: View {
         ZStack {
             RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.08))
             if let thumb = channel.thumb, let url = URL(string: thumb) {
-                AsyncImage(url: url) { image in
+                CachedArtwork(url: url) { image in
                     image.resizable().aspectRatio(contentMode: .fit).padding(size * 0.12)
                 } placeholder: { number }
             } else {
@@ -250,7 +272,7 @@ struct GuideImage: View {
     var body: some View {
         ZStack {
             Rectangle().fill(Color.white.opacity(0.06))
-            AsyncImage(url: app.imageURL(path, width: width, height: height)) { image in
+            CachedArtwork(url: app.imageURL(path, width: width, height: height)) { image in
                 image.resizable().aspectRatio(contentMode: .fill)
             } placeholder: {
                 Image(systemName: "tv").font(.title2).foregroundStyle(.white.opacity(0.25))
