@@ -136,6 +136,7 @@ final class TVPlaybackController: NSObject {
     /// Where the current stream was asked to start: a stream that fails before opening retries from here.
     private var requestedStartMs: Int?
     private var selectionObserver: NSObjectProtocol?
+    private var awakeObservation: NSKeyValueObservation?
 
     init(request: TVPlayRequest, session: TVSession, onFinish: @escaping () -> Void) {
         queue = request.queue
@@ -152,6 +153,7 @@ final class TVPlaybackController: NSObject {
     func start() {
         TVMusicPlayer.shared.yieldToVideo()
         TVLiveNow.shared.stop()
+        awakeObservation = TVKeepAwake.follow(player, owner: self)
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 1), queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
@@ -169,6 +171,8 @@ final class TVPlaybackController: NSObject {
         guard !stopped else { return }
         stopped = true
         player.pause()
+        awakeObservation = nil
+        TVKeepAwake.hold(false, by: self)
         if let sleepObserver { NotificationCenter.default.removeObserver(sleepObserver) }
         if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
         if let timeObserver { player.removeTimeObserver(timeObserver) }

@@ -229,6 +229,7 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
         // Already reported as finished, if it played to its end.
         let item = ending ? nil : current, time = timeMs, id = sessionID
         mediaPlayer.stop()
+        TVKeepAwake.hold(false, by: self)
         if let sleepObserver { NotificationCenter.default.removeObserver(sleepObserver) }
         if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver) }
         if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
@@ -266,6 +267,8 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
             errorMessage = "This file couldn't be played."
         default: break
         }
+        // VLC draws its own picture, so tvOS doesn't know a video is playing: keep the TV awake.
+        TVKeepAwake.hold(!stopped && (state == .playing || state == .buffering || state == .opening), by: self)
         if !stopped { report(force: false) }
         updateNowPlaying()
     }

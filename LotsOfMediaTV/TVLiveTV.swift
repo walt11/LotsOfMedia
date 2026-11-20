@@ -924,8 +924,8 @@ final class TVLiveNow {
         }
         // The screen saver (or Control Center) only makes the app inactive: the corner window
         // would keep playing under it. It pauses, picks up again after a quick look away, and
-        // after longer is closed like a return from the Home Screen. (Full screen keeps the TV
-        // awake itself, so no screen saver comes over it.)
+        // after longer is closed like a return from the Home Screen. (A playing channel keeps the
+        // TV awake, so this is mostly for a paused one or Control Center.)
         resignObserver = NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification,
                                                                 object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.appWillResignActive() }
@@ -1408,6 +1408,7 @@ final class TVLivePlaybackController: NSObject {
     /// The previous stream being stopped on the server.
     private var ending: Task<Void, Never>?
     private var jumpShown = false
+    private var awakeObservation: NSKeyValueObservation?
 
     init(channel: LiveChannel, session: TVSession, onClose: @escaping () -> Void) {
         self.channel = channel
@@ -1421,6 +1422,7 @@ final class TVLivePlaybackController: NSObject {
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 1), queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
+        awakeObservation = TVKeepAwake.follow(player, owner: self)
         tune(channel)
     }
 
@@ -1428,6 +1430,8 @@ final class TVLivePlaybackController: NSObject {
         guard !stopped else { return }
         stopped = true
         player.pause()
+        awakeObservation = nil
+        TVKeepAwake.hold(false, by: self)
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         endSession()
     }

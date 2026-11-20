@@ -267,3 +267,30 @@ final class TVLiveScreenSaverTests: XCTestCase {
         XCTAssertNotNil(now.channel)
     }
 }
+
+/// The screen saver stays off while any player is playing, and comes back once all have stopped.
+@MainActor
+final class TVKeepAwakeTests: XCTestCase {
+    func testAwakeWhileAnyPlayerPlays() {
+        let live = NSObject(), movie = NSObject()
+        TVKeepAwake.hold(true, by: live)
+        TVKeepAwake.hold(true, by: movie)
+        XCTAssertTrue(UIApplication.shared.isIdleTimerDisabled)
+        TVKeepAwake.hold(false, by: movie)
+        XCTAssertTrue(UIApplication.shared.isIdleTimerDisabled, "the live channel still plays")
+        TVKeepAwake.hold(false, by: live)
+        XCTAssertFalse(UIApplication.shared.isIdleTimerDisabled)
+        XCTAssertFalse(TVKeepAwake.isHeld)
+    }
+
+    func testFollowsAnAVPlayer() {
+        let owner = NSObject(), player = AVPlayer()
+        let observation = TVKeepAwake.follow(player, owner: owner)
+        let settled = expectation(description: "observed")
+        DispatchQueue.main.async { settled.fulfill() }
+        wait(for: [settled], timeout: 1)
+        XCTAssertFalse(TVKeepAwake.isHeld, "a paused player doesn't keep the TV awake")
+        observation.invalidate()
+        TVKeepAwake.hold(false, by: owner)
+    }
+}

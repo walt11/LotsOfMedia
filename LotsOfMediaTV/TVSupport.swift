@@ -159,3 +159,34 @@ class TVFocusedPlayerViewController: AVPlayerViewController {
         system.updateFocusIfNeeded()
     }
 }
+
+/// Keeps the TV awake (no screen saver) while one of the app's video players is playing. tvOS only
+/// does this itself for Apple's player when it manages playback on its own; the app's players take
+/// Play/Pause themselves, and VLC draws its own picture, so the screen saver came over a playing video.
+@MainActor
+enum TVKeepAwake {
+    private static var holders = Set<ObjectIdentifier>()
+    static var isHeld: Bool { !holders.isEmpty }
+
+    /// `owner` is playing (or has stopped): the TV stays awake while any owner plays.
+    static func hold(_ playing: Bool, by owner: AnyObject) {
+        let id = ObjectIdentifier(owner)
+        if playing { holders.insert(id) } else { holders.remove(id) }
+        let disable = !holders.isEmpty
+        if UIApplication.shared.isIdleTimerDisabled != disable { UIApplication.shared.isIdleTimerDisabled = disable }
+    }
+
+    /// Holds for `owner` while `player` plays or waits to; keep the observation until the owner stops,
+    /// then call `hold(false, by:)`.
+    static func follow(_ player: AVPlayer, owner: AnyObject) -> NSKeyValueObservation {
+        player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak owner, weak player] _, _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    // Read now, not when observed: a late change can't hold after the owner stopped.
+                    guard let owner, let player else { return }
+                    hold(player.timeControlStatus != .paused, by: owner)
+                }
+            }
+        }
+    }
+}
