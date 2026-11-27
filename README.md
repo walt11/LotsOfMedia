@@ -4,6 +4,8 @@ A native SwiftUI Plex and Jellyfin client for iPhone, iPad (iOS 17+) and Apple T
 
 The Roku version, built to look and work like the Apple TV app, lives in its own repository: [LotsOfMedia-Roku](https://github.com/walt11/LotsOfMedia-Roku).
 
+LotsOfMedia is free to use. Features depend on your device and media server.
+
 AI coding assistants were used during the creation of this app.
 
 [Privacy Policy](https://walt11.github.io/LotsOfMedia/privacy-policy.html) · [Support](https://walt11.github.io/LotsOfMedia/support.html)

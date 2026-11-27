@@ -41,7 +41,6 @@ final class VisualRegressionTests: XCTestCase {
             .environment(AudioPlayer.shared)
             .environment(NetworkMonitor.shared)
             .environment(LiveTVStore.shared)
-            .environment(ProStore.shared)
             .preferredColorScheme(.dark)
             .tint(Cinema.accent)
     }

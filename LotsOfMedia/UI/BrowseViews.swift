@@ -1199,15 +1199,7 @@ struct PlaylistDetailView: View {
 
     private var actionRow: some View {
         MusicActionRow(shuffleOn: $shuffleOn, isPlaying: isPlayingHere, playOrPause: playOrPause, canPlay: playable) {
-            if playable && summary == nil && !ProStore.shared.isUnlocked {
-                Button { ProStore.presentPaywall(.downloads, after: .zero) } label: {
-                    Image(systemName: "arrow.down.circle").font(.system(size: 26))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 36, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .accessibilityLabel("Download")
-            } else if playable {
+            if playable {
                 Menu { downloadMenuContent } label: {
                     Group {
                         if let summary { GroupDownloadIcon(summary: summary, size: 26) }
@@ -1750,9 +1742,7 @@ struct CreatePlaylistView: View {
     }
     private var currentSection: PlexDirectory? { sections.first { $0.key == sectionID } }
 
-    var body: some View { ProGate(.playlists) { content } }
-
-    private var content: some View {
+    var body: some View {
         NavigationStack {
             Group {
                 if let created {
@@ -1908,9 +1898,7 @@ struct AddToPlaylistView: View {
     @State private var saving = false
     @State private var error: String?
     @State private var creating = false
-    var body: some View { ProGate(.playlists) { content } }
-
-    private var content: some View {
+    var body: some View {
         NavigationStack {
             List {
                 Button { creating = true } label: { Label("New Playlist", systemImage: "plus") }

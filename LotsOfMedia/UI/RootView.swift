@@ -5,7 +5,6 @@ import CoreSpotlight
 struct RootView: View {
     @Environment(AppState.self) private var app
     @Environment(DownloadManager.self) private var downloads
-    @Environment(ProStore.self) private var pro
     /// "Who's Watching?", once per launch (see `WhoIsWatching`).
     @State private var askWhoIsWatching = false
     @State private var askedWhoIsWatching = false
@@ -19,14 +18,12 @@ struct RootView: View {
             }
         }
         .sheet(item: Binding(get: { app.downloadPreview }, set: { app.downloadPreview = $0 })) { item in
-            ProGate(.downloads) {
-                DownloadPreviewView(item: item, quality: DownloadQuality.choices(for: item).contains(downloads.defaultQuality) ? downloads.defaultQuality : .original)
-            }
+            DownloadPreviewView(item: item, quality: DownloadQuality.choices(for: item).contains(downloads.defaultQuality) ? downloads.defaultQuality : .original)
         }
         .onOpenURL { url in Task { await open(url) } }
         .fullScreenCover(isPresented: $askWhoIsWatching) { UserPickerView() }
         .onChange(of: app.canSwitchUsers, initial: true) { _, can in
-            guard can, !askedWhoIsWatching, pro.isUnlocked, WhoIsWatching.isEnabled, !app.needsOnboarding else { return }
+            guard can, !askedWhoIsWatching, WhoIsWatching.isEnabled, !app.needsOnboarding else { return }
             askedWhoIsWatching = true
             askWhoIsWatching = true
         }
@@ -236,7 +233,7 @@ private struct ModeShell: View {
                 case .home:
                     if mode == .music { MusicHomeView() } else { HomeView() }
                 case .library: LibrariesView()
-                case .live: ProGate(.liveTV, inline: true) { LiveTVView() }
+                case .live: LiveTVView()
                 case .search: SearchView()
                 case .downloads: DownloadsView()
                 }

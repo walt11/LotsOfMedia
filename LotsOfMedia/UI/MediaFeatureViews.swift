@@ -98,11 +98,8 @@ struct PlaybackPreferencesView: View {
                 Toggle("Stream over Cellular", isOn: Binding(get: { prefs.allowsCellular(.watch) }, set: { prefs.setCellular($0, mode: .watch) }))
             }
             Section {
-                Toggle(isOn: Binding(get: { builtInPlayer && ProStore.shared.isUnlocked },
-                                     set: { if ProStore.require(.builtInPlayer) { builtInPlayer = $0 } })) {
-                    HStack { Text("Built-in Player for Other Formats"); ProBadge() }
-                }
-                if builtInPlayer && ProStore.shared.isUnlocked {
+                Toggle("Built-in Player for Other Formats", isOn: $builtInPlayer)
+                if builtInPlayer {
                     Toggle("Even Out Volume", isOn: $evenOutVolume)
                 }
             }

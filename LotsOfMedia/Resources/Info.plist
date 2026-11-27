@@ -38,10 +38,6 @@
 	<string>$(AppIdentifierPrefix)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<key>NSUserActivityTypes</key>
-	<array>
-		<string>net.jwalter.LotsOfMedia.unlockPro</string>
-	</array>
 	<key>INIntentsSupported</key>
 	<array>
 		<string>INPlayMediaIntent</string>

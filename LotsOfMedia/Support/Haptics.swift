@@ -2,7 +2,7 @@
 import UIKit
 #endif
 
-/// Light touch feedback for actions: play, favorite, mark watched, download, record, purchase.
+/// Light touch feedback for actions: play, favorite, mark watched, download, record.
 /// Callable from anywhere; does nothing on Apple TV.
 enum Haptics {
     static func tap() {

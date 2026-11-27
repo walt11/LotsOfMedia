@@ -22,11 +22,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             DownloadManager.shared.start()
             // Last queue and position, paused; nothing plays until the user taps play.
             AudioPlayer.shared.restoreSession()
-            #if DEBUG
-            // Development and screenshots: `-proUnlocked` behaves as if Pro were bought.
-            if ProcessInfo.processInfo.arguments.contains("-proUnlocked") { ProStore.unlockedForTesting = true }
-            #endif
-            ProStore.shared.start()
         }
         UNUserNotificationCenter.current().delegate = self
         return true
@@ -73,7 +68,6 @@ struct LotsOfMediaApp: App {
                 .environment(AudioPlayer.shared)
                 .environment(NetworkMonitor.shared)
                 .environment(LiveTVStore.shared)
-                .environment(ProStore.shared)
                 .preferredColorScheme(.dark)
                 .modifier(ThemeTint())
                 .task {
@@ -82,7 +76,6 @@ struct LotsOfMediaApp: App {
                     #endif
                     await app.bootstrap()
                 }
-                .onContinueUserActivity(ProStore.siriUnlockActivity) { _ in ProStore.presentPaywall(.siri) }
         }
         .commands { AppCommands(app: app) }
         .onChange(of: scenePhase) { _, phase in

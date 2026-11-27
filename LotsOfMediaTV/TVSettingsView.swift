@@ -4,8 +4,6 @@ import SwiftUI
 /// Settings: who's signed in and the server on the left; grouped rows on the right.
 struct TVSettingsView: View {
     @Environment(TVSession.self) private var session
-    @Environment(ProStore.self) private var store
-    @State private var showPaywall = false
     @State private var showJellyfin = false
     @State private var showAddPlex = false
     @State private var userToSwitch: PlexHomeUser?
@@ -31,7 +29,6 @@ struct TVSettingsView: View {
                     if session.canSwitchUsers { profiles }
                     playback
                     servers
-                    pro
                     about
                     if session.token != nil {
                         TVSettingsGroup {
@@ -50,7 +47,6 @@ struct TVSettingsView: View {
         .padding(.horizontal, 90)
         .padding(.top, 30)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .sheet(isPresented: $showPaywall) { ProPaywallView() }
         .fullScreenCover(item: $userToSwitch) { user in
             TVPinPad(user: user) { pin in
                 try await session.switchUser(user, pin: pin)
@@ -61,11 +57,6 @@ struct TVSettingsView: View {
             Button("Sign Out", role: .destructive) { session.signOut() }
             Button("Cancel", role: .cancel) {}
         }
-        .alert("LotsOfMedia Pro", isPresented: Binding(get: { store.message != nil && !showPaywall }, set: { if !$0 { store.message = nil } })) {
-            Button("OK") { store.message = nil }
-        } message: { Text(store.message ?? "") }
-        .task { await store.loadProduct() }
-        .onChange(of: store.isUnlocked) { builtInPlayer = BuiltInPlayer.isEnabled }
     }
 
     // MARK: Left panel
@@ -91,13 +82,6 @@ struct TVSettingsView: View {
                         Text(statusText).font(.caption).foregroundStyle(.secondary)
                     }
                 }
-            }
-            if store.isUnlocked {
-                Label("LotsOfMedia Pro", systemImage: "checkmark.seal.fill")
-                    .font(.headline)
-                    .foregroundStyle(TVTheme.accent)
-                    .padding(.horizontal, 22).padding(.vertical, 12)
-                    .background(TVTheme.accent.opacity(0.15), in: Capsule())
             }
             Spacer(minLength: 0)
             VStack(alignment: .leading, spacing: 6) {
@@ -149,21 +133,19 @@ struct TVSettingsView: View {
                 TVProfilePicker.isEnabled = askWhoIsWatching
             } label: {
                 TVSettingsRow(icon: "person.2.fill", tint: .teal, title: "Ask Who's Watching", subtitle: "When LotsOfMedia opens") {
-                    if store.isUnlocked { TVOnOff(on: askWhoIsWatching) } else { TVProBadge() }
+                    TVOnOff(on: askWhoIsWatching)
                 }
             }
             ForEach(session.homeUsers) { user in
                 Button {
-                    guard ProStore.require(.homeUsers), user.uuid != session.user?.uuid else { return }
+                    guard user.uuid != (session.currentHomeUser?.uuid ?? session.user?.uuid) else { return }
                     if user.isProtected { userToSwitch = user } else { Task { await switchTo(user, pin: nil) } }
                 } label: {
                     TVSettingsRow(title: user.title, subtitle: user.isProtected ? "PIN protected" : nil) {
                         TVAvatar(path: user.thumb, name: user.title, size: 52)
                     } trailing: {
-                        if user.uuid == session.user?.uuid {
+                        if user.uuid == (session.currentHomeUser?.uuid ?? session.user?.uuid) {
                             Image(systemName: "checkmark").font(.headline)
-                        } else if !store.isUnlocked {
-                            TVProBadge()
                         }
                     }
                 }
@@ -188,12 +170,11 @@ struct TVSettingsView: View {
                 }
             }
             Button {
-                guard ProStore.require(.builtInPlayer) else { return }
                 builtInPlayer.toggle()
                 BuiltInPlayer.isEnabled = builtInPlayer
             } label: {
                 TVSettingsRow(icon: "play.rectangle.fill", tint: .orange, title: "Built-in Player", subtitle: "For formats Apple TV can't play") {
-                    if store.isUnlocked { TVOnOff(on: builtInPlayer) } else { TVProBadge() }
+                    TVOnOff(on: builtInPlayer)
                 }
             }
             Button {
@@ -253,22 +234,6 @@ struct TVSettingsView: View {
         }
         .fullScreenCover(isPresented: $showJellyfin) { TVJellyfinSignInView() }
         .fullScreenCover(isPresented: $showAddPlex) { TVAddPlexServerView() }
-    }
-
-    @ViewBuilder private var pro: some View {
-        if !store.isUnlocked {
-            TVSettingsGroup("LotsOfMedia Pro") {
-                Button { showPaywall = true } label: {
-                    TVSettingsRow(icon: "star.fill", tint: .yellow, title: "Unlock Pro",
-                                  subtitle: "Profiles, the built-in player and more") {
-                        if let price = store.price { Text(price).font(.headline) }
-                    }
-                }
-                Button { Task { await store.restore() } } label: {
-                    TVSettingsRow(icon: "arrow.clockwise", tint: .gray, title: "Restore Purchase")
-                }
-            }
-        }
     }
 
     private var about: some View {
@@ -403,15 +368,6 @@ struct TVOnOff: View {
     }
 }
 
-struct TVProBadge: View {
-    var body: some View {
-        Text("PRO").font(.caption.weight(.heavy)).tracking(1)
-            .foregroundStyle(.black)
-            .padding(.horizontal, 12).padding(.vertical, 4)
-            .background(.white, in: Capsule())
-    }
-}
-
 /// A profile picture, or the name's first letter when there isn't one.
 struct TVAvatar: View {
     @Environment(TVSession.self) private var session
@@ -504,7 +460,7 @@ struct TVAcknowledgementsView: View {
 
 // MARK: - Who's watching
 
-/// At launch in a Plex Home with Pro: pick who's watching (with their PIN if they have one).
+/// At launch in a Plex Home: pick who's watching (with their PIN if they have one).
 struct TVProfilePicker: View {
     /// Asked for first (a Top Shelf item's PIN-protected profile); Cancel leaves the choice open.
     var suggested: PlexHomeUser? = nil

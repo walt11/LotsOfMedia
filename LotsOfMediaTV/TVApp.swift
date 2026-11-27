@@ -5,13 +5,7 @@ struct LotsOfMediaTVApp: App {
     @State private var session = TVSession()
 
     init() {
-        // Same Pro purchase as on iPhone and iPad (Universal Purchase).
-        #if DEBUG
-        // Development and screenshots: `-proUnlocked` behaves as if Pro were bought.
-        if ProcessInfo.processInfo.arguments.contains("-proUnlocked") { ProStore.unlockedForTesting = true }
-        #endif
         MainActor.assumeIsolated {
-            ProStore.shared.start()
             TVTabBarFocusWatcher.start()
         }
     }
@@ -26,7 +20,6 @@ struct LotsOfMediaTVApp: App {
                 #endif
             }
                 .environment(session)
-                .environment(ProStore.shared)
                 .preferredColorScheme(.dark)
                 .tint(.white)
                 .task {
@@ -138,7 +131,7 @@ struct TVRootView: View {
                 NavigationStack { TVDetailView(item: item).tvDestinations() }
                     .background(TVTheme.background.ignoresSafeArea())
             }
-            // Plex Home with Pro: who's watching, once when the app opens.
+            // Plex Home: who's watching, once when the app opens.
             .fullScreenCover(isPresented: $askWhoIsWatching) { TVProfilePicker(suggested: suggestedProfile) }
             .onChange(of: asksWhoIsWatching, initial: true) { _, shouldAsk in
                 guard shouldAsk, !askedWhoIsWatching else { return }
@@ -197,23 +190,23 @@ struct TVRootView: View {
     /// The tab view stays mounted so startup tasks and Top Shelf links still run.
     private var hidesDashboardForProfileSelection: Bool {
         if askWhoIsWatching { return true }
-        guard !askedWhoIsWatching, TVProfilePicker.isEnabled, ProStore.shared.isUnlocked,
+        guard !askedWhoIsWatching, TVProfilePicker.isEnabled,
               session.token != nil, session.selectedServer?.isJellyfin != true else { return false }
         return !session.homeUsersLoaded || session.canSwitchUsers
     }
 
-    private var asksWhoIsWatching: Bool { session.canSwitchUsers && TVProfilePicker.isEnabled && ProStore.shared.isUnlocked }
+    private var asksWhoIsWatching: Bool { session.canSwitchUsers && TVProfilePicker.isEnabled }
 
     private enum ProfileSwitch { case switched, needsPIN(PlexHomeUser), unavailable }
 
     /// Becomes the Plex Home profile with this id (already being it counts), answering
     /// "Who's Watching?". A PIN-protected profile still needs its PIN wherever "Who's Watching?"
-    /// would have asked for it. Switching profiles is Pro.
+    /// would have asked for it.
     private func switchToProfile(_ uuid: String) async -> ProfileSwitch {
         let profile = session.homeUsers.first { $0.uuid == uuid }
         if let profile, profile.isProtected, asksWhoIsWatching, profile.uuid != session.currentHomeUser?.uuid { return .needsPIN(profile) }
         if uuid == session.user?.uuid { askWhoIsWatching = false; return .switched }
-        guard ProStore.shared.isUnlocked, let profile else { return .unavailable }
+        guard let profile else { return .unavailable }
         if profile.isProtected { return .needsPIN(profile) }
         askWhoIsWatching = false
         do { try await session.switchUser(profile, pin: nil) } catch { return .unavailable }

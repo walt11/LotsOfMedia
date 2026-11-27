@@ -75,7 +75,6 @@ enum MusicRadio {
 extension AppState {
     /// Plays a radio station built from one song.
     func startRadio(from track: PlexMetadata) async {
-        guard ProStore.require(.radio) else { return }
         guard let api = browseAPI, let sid = selectedServerID,
               let tracks = try? await MusicRadio.tracks(seed: track, api: api), !tracks.isEmpty else { return }
         AudioPlayer.shared.play(tracks, serverID: sid)

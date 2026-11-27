@@ -12,10 +12,6 @@ final class PlayMediaIntentHandler: NSObject, INPlayMediaIntentHandling {
     }
 
     func handle(intent: INPlayMediaIntent) async -> INPlayMediaIntentResponse {
-        // Siri is a Pro feature: open the app, which shows the unlock screen.
-        guard ProStore.isUnlocked else {
-            return INPlayMediaIntentResponse(code: .failureRequiringAppLaunch, userActivity: NSUserActivity(activityType: ProStore.siriUnlockActivity))
-        }
         let started = await SiriMedia.play(intent.mediaItems?.first, shuffle: intent.playShuffled ?? false)
         return INPlayMediaIntentResponse(code: started ? .success : .failure, userActivity: nil)
     }

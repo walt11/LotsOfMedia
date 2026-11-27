@@ -12,8 +12,7 @@ enum BuiltInPlayer {
 
     /// Settings → Playback: on by default.
     static var isEnabled: Bool {
-        // A Pro feature; without Pro, the server converts these files as before.
-        get { ProStore.isUnlocked && (UserDefaults.standard.object(forKey: preferenceKey) as? Bool ?? true) }
+        get { UserDefaults.standard.object(forKey: preferenceKey) as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: preferenceKey) }
     }
 

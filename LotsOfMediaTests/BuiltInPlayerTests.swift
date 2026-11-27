@@ -6,10 +6,8 @@ final class BuiltInPlayerTests: XCTestCase {
     private var saved: Any?
     override func setUp() {
         saved = UserDefaults.standard.object(forKey: BuiltInPlayer.preferenceKey)
-        ProStore.unlockedForTesting = true   // the built-in player is a Pro feature
     }
     override func tearDown() {
-        ProStore.unlockedForTesting = false
         if let saved { UserDefaults.standard.set(saved, forKey: BuiltInPlayer.preferenceKey) }
         else { UserDefaults.standard.removeObject(forKey: BuiltInPlayer.preferenceKey) }
     }

@@ -44,7 +44,6 @@ final class SmartDownloads {
     }
 
     func set(_ rule: SmartDownloadRule) {
-        guard ProStore.require(.downloads) else { return }
         if let i = rules.firstIndex(where: { $0.id == rule.id }) { rules[i] = rule } else { rules.append(rule) }
         persist()
         Task { await refresh(only: rule.id) }
@@ -62,7 +61,7 @@ final class SmartDownloads {
     }
 
     func refresh(only ruleID: String? = nil) async {
-        guard ProStore.isUnlocked, !isRefreshing else { return }
+        guard !isRefreshing else { return }
         isRefreshing = true
         defer { isRefreshing = false }
         let manager = DownloadManager.shared

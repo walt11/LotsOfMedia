@@ -1055,10 +1055,9 @@ struct SiriSettingRow: View {
             LabeledContent("Siri") { Text("Say “Play … in LotsOfMedia”").foregroundStyle(.secondary) }
         case .notDetermined:
             Button {
-                guard ProStore.require(.siri) else { return }
                 INPreferences.requestSiriAuthorization { s in Task { @MainActor in status = s } }
             } label: {
-                HStack { Label("Use Siri to Play Music", systemImage: "mic"); Spacer(); ProBadge() }
+                Label("Use Siri to Play Music", systemImage: "mic")
             }
         default:
             LabeledContent("Siri", value: "Off in iPhone Settings")
@@ -1140,7 +1139,6 @@ struct SettingsView: View {
         @Bindable var app = app
         @Bindable var downloads = downloads
         Form {
-            ProSettingsSection()
             Section("Account") {
                 if let jellyfin = app.jellyfinUser {
                     LabeledContent("Jellyfin", value: jellyfin)
@@ -1259,7 +1257,7 @@ struct SettingsView: View {
             }
         }
         .titleWithDownloadStatus("Settings")
-        .sheet(isPresented: $showUsers) { ProGate(.homeUsers) { UserPickerView() } }
+        .sheet(isPresented: $showUsers) { UserPickerView() }
         .task { await app.loadHomeUsers() }
         .task { usedBytes = await Task.detached { DownloadStore.usedBytes() }.value }
         .confirmationDialog("Sign out? Downloads stay on this device.", isPresented: $confirmSignOut, titleVisibility: .visible) {

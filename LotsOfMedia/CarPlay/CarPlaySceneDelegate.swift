@@ -73,7 +73,6 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver {
     private var stopped = false
     /// Song rows on screen, by rating key, so the playing one shows CarPlay's playing indicator.
     private var songRows: [String: NSHashTable<CPListItem>] = [:]
-    private var proObserver: NSObjectProtocol?
     private let modeButtons = CarPlayModeButtons()
 
     init(interface: CPInterfaceController) { self.interface = interface }
@@ -84,7 +83,6 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver {
     private var player: AudioPlayer { .shared }
 
     func start() {
-        guard ProStore.isUnlocked else { return showLocked() }
         homeTemplate.tabImage = UIImage(systemName: "house")
         libraryTemplate.tabImage = UIImage(systemName: "music.note.house")
         playlistsTemplate.tabImage = UIImage(systemName: "music.note.list")
@@ -100,26 +98,7 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver {
 
     func stop() {
         stopped = true
-        if let proObserver { NotificationCenter.default.removeObserver(proObserver) }
         CPNowPlayingTemplate.shared.remove(self)
-    }
-
-    /// CarPlay is part of Pro: a neutral note until it's unlocked, then the full app.
-    /// (CarPlay guidelines: never ask a driver to pick up their iPhone.)
-    private func showLocked() {
-        let note = CPListItem(text: "CarPlay is included with LotsOfMedia Pro", detailText: nil,
-                              image: UIImage(systemName: "sparkles"))
-        let template = CPListTemplate(title: "LotsOfMedia", sections: [CPListSection(items: [note])])
-        interface.setRootTemplate(template, animated: false, completion: nil)
-        guard proObserver == nil else { return }
-        proObserver = NotificationCenter.default.addObserver(forName: ProStore.didChange, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, !self.stopped, ProStore.isUnlocked else { return }
-                if let o = self.proObserver { NotificationCenter.default.removeObserver(o) }
-                self.proObserver = nil
-                self.start()
-            }
-        }
     }
 
     private func reload() async {

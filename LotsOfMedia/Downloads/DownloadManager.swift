@@ -448,7 +448,6 @@ final class DownloadManager {
 
     /// `batchTitle`: name for a group download (playlist, season…), announced once when all finish.
     func enqueue(_ items: [PlexMetadata], serverID: String, quality: DownloadQuality? = nil, batchTitle: String? = nil, forceConversion: Bool = false) {
-        guard ProStore.require(.downloads) else { return }
         let leaves = items.filter { $0.isLeaf && $0.kind != .photo }
         let batchID = batchTitle != nil && leaves.count > 1 ? UUID().uuidString : nil
         var newRecords: [DownloadRecord] = []
@@ -499,7 +498,6 @@ final class DownloadManager {
     /// Download a whole playlist and remember it as one unit.
     func downloadPlaylist(ratingKey: String, title: String, thumb: String?, items: [PlexMetadata],
                           serverID: String, quality: DownloadQuality? = nil) {
-        guard ProStore.require(.downloads) else { return }
         let leaves = items.filter { $0.isPlayableVideo || $0.kind == .track }
         let ids = leaves.map { DownloadRecord.makeID(serverID: serverID, ratingKey: $0.ratingKey) }
         let audio = !leaves.isEmpty && leaves.allSatisfy { $0.kind == .track }
@@ -528,7 +526,7 @@ final class DownloadManager {
     /// Brings downloaded playlists in line with the server: downloads new items
     /// and/or removes ones taken off the playlist, per each playlist's settings.
     func syncPlaylistDownloads(only id: String? = nil) async {
-        guard ProStore.isUnlocked, NetworkMonitor.shared.isConnected, !LibraryCache.isOffline else { return }
+        guard NetworkMonitor.shared.isConnected, !LibraryCache.isOffline else { return }
         for c in collections where c.keepsUpdated && (id == nil || c.id == id) {
             guard let api = ServerDirectory.shared.api(for: c.serverID),
                   let items = try? await LibraryCache.$requireFresh.withValue(true, operation: { try await api.playlistItems(c.ratingKey) }),
@@ -722,7 +720,7 @@ final class DownloadManager {
 
     /// Replace a download that turned out to be unplayable with a converted copy.
     func redownloadPlayable(_ id: String) {
-        guard let rec = records.first(where: { $0.id == id }), ProStore.require(.downloads) else { return }
+        guard let rec = records.first(where: { $0.id == id }) else { return }
         delete(id)
         enqueue([rec.metadata], serverID: rec.serverID, quality: .original, forceConversion: true)
     }

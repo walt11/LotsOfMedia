@@ -57,7 +57,7 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);font-fa
 <div class="wrap">
   <p class="eyebrow">Privacy Policy — Effective November 27, 2026</p>
   <h1>How LotsOfMedia handles your data</h1>
-  <p class="dek">LotsOfMedia is an app for watching and listening to media on <strong>your own Plex or Jellyfin server</strong>. The app connects to Plex services, the media servers you choose, and Apple services used by features such as purchases. <strong>There is no LotsOfMedia server</strong>, app analytics, advertising, or in-app tracking.</p>
+  <p class="dek">LotsOfMedia is an app for watching and listening to media on <strong>your own Plex or Jellyfin server</strong>. The app connects to Plex services, the media servers you choose, and Apple services used by optional features such as Siri. <strong>There is no LotsOfMedia server</strong>, app analytics, advertising, or in-app tracking.</p>
 
   <div class="facts">
     <div class="facts-head">
@@ -83,10 +83,6 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);font-fa
     <div class="facts-row">
       <div class="k">Downloads, offline progress &amp; settings<span class="indent">where they're stored</span></div>
       <div class="v">On this device</div>
-    </div>
-    <div class="facts-row">
-      <div class="k">LotsOfMedia Pro purchase<span class="indent">handled entirely by Apple</span></div>
-      <div class="v cond">Through the App Store</div>
     </div>
     <div class="facts-row">
       <div class="k">Analytics, ads &amp; tracking</div>
@@ -121,7 +117,7 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);font-fa
       <li><strong>plex.tv</strong> — to sign you in, list the servers your account can reach, show and switch between Plex Home users (including the PIN you type for a protected user), and load profile pictures and some artwork.</li>
       <li><strong>Your Plex Media Server</strong> — to browse your libraries, stream and download media, and keep it informed as you use the app: what you play and how far you get (so Continue Watching and watched status stay in sync), playlists you create or edit (including a cover photo you choose for one), Live TV recordings you schedule, and subtitles you search for (your server looks those up with its own subtitle providers).</li>
     </ul>
-    <p>If you connect to Jellyfin, your username and password go to the Jellyfin server you enter for sign-in, or you can use Quick Connect. Your selected server receives requests for library content, playback, and supported library changes. Sign-in tokens are stored in the Apple Keychain. Requests can include app and device information such as the version and an installation identifier so the service can recognize the client.</p>
+    <p>If you connect to Jellyfin, your username and password go to the Jellyfin server you enter for sign-in, or you can use Quick Connect. Your selected server receives requests for library content, playback, and supported library changes. Sign-in tokens are stored on your device. Requests can include app and device information such as the version and an installation identifier so the service can recognize the client.</p>
   </section>
 
   <section id="device">
@@ -150,7 +146,6 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);font-fa
     <ul>
       <li><strong>Siri</strong> — if you allow it, you can say "Play &lt;playlist, artist, album or song&gt; in LotsOfMedia". Your voice is handled by Apple. The app gives Siri the names of your music playlists so it can recognize them.</li>
       <li><strong>CarPlay, AirPlay, the Lock Screen and the Dynamic Island</strong> show what's playing and download progress, using Apple's standard system features on your devices.</li>
-      <li><strong>LotsOfMedia Pro</strong> — the optional one-time purchase, offer codes and Family Sharing are handled by the App Store. Payment details never reach the app or the developer. The app asks the App Store whether Pro is unlocked and remembers that answer on your device, so it works offline. Apple reports sales to the developer in aggregate, without identifying you.</li>
     </ul>
     <p>These are governed by <a href="https://www.apple.com/legal/privacy/">Apple's privacy policy</a>.</p>
   </section>
@@ -184,7 +179,7 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);font-fa
 
   <section id="security">
     <div class="sec-head"><span class="sec-num">§08</span><h2>Security</h2></div>
-    <p>Connections to plex.tv use HTTPS. Connections to your server use HTTPS when your server offers it, which Plex servers normally do. Your sign-in token is kept in the Keychain, Apple's encrypted credential store.</p>
+    <p>Connections to plex.tv use HTTPS. Connections to your server use HTTPS when your server offers it, which Plex servers normally do. Sign-in tokens are saved in the device's Keychain on Apple platforms or in the channel's local registry on Roku.</p>
   </section>
 
   <section id="built-with-ai">

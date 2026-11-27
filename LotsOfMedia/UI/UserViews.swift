@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// "Who's Watching?" when the app opens (Plex Home with Pro), as on Apple TV. On by default on
+/// "Who's Watching?" when the app opens (Plex Home), as on Apple TV. On by default on
 /// a Mac, which a household tends to share; off on iPhone and iPad.
 enum WhoIsWatching {
     static let preferenceKey = "askWhoIsWatching"
@@ -173,7 +173,7 @@ struct UserSwitcherButton: View {
         }
         .accessibilityLabel("Profile menu")
         .sheet(isPresented: $customizing) { HomeCustomizeView() }
-        .sheet(isPresented: $showPicker) { ProGate(.homeUsers) { UserPickerView() } }
+        .sheet(isPresented: $showPicker) { UserPickerView() }
         .sheet(isPresented: $showSettings) {
             NavigationStack {
                 SettingsView()

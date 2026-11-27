@@ -449,7 +449,6 @@ enum DownloadActions {
 struct DownloadButton: View {
     @Environment(AppState.self) private var app
     @Environment(DownloadManager.self) private var downloads
-    @Environment(ProStore.self) private var pro
     let item: PlexMetadata
     var compact = false
     /// Styled to sit in a row of bordered action buttons (detail pages).
@@ -495,9 +494,6 @@ struct DownloadButton: View {
                 } label: {
                     DownloadStateIcon(record: rec, size: iconSize)
                 }
-            } else if !pro.isUnlocked {
-                // Downloads are part of Pro: go straight to the unlock screen.
-                Button { ProStore.presentPaywall(.downloads, after: .zero) } label: { downloadIcon }
             } else {
                 // Quality (and Unwatched Only for shows) are chosen in Download Options.
                 Button { previewQuality = effectiveDefault } label: { downloadIcon }

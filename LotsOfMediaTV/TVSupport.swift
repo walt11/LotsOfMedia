@@ -16,19 +16,14 @@ enum TVTheme {
     static func title(_ size: CGFloat = 60) -> Font { .system(size: size, weight: .bold) }
 }
 
-/// Used by ProStore when it presents the unlock screen; the TV app is always dark with white focus.
-struct ThemeTint: ViewModifier {
-    func body(content: Content) -> some View { content.tint(TVTheme.accent) }
-}
-
 // MARK: - Stand-ins for iPhone-only features the shared playback code mentions
 
 /// The VLC-based player for files tvOS can't play (MKV, DTS, TrueHD, image subtitles).
-/// A Pro feature, on by default with Pro; without it the server converts those files.
+/// When disabled, the server converts those files.
 enum BuiltInPlayer {
     static let preferenceKey = "builtInPlayerEnabled"
     static var isEnabled: Bool {
-        get { ProStore.isUnlocked && (UserDefaults.standard.object(forKey: preferenceKey) as? Bool ?? true) }
+        get { UserDefaults.standard.object(forKey: preferenceKey) as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: preferenceKey) }
     }
     static func canPlay(media: PlexMedia, kind: PlexMetadata.Kind) -> Bool {

@@ -75,7 +75,7 @@ targets:
         SKIP_INSTALL: YES
         CODE_SIGN_STYLE: Automatic
   LotsOfMediaTV:
-    # Apple TV app. Same bundle ID as the iPhone app for Universal Purchase (one listing, Pro on both).
+    # Apple TV app. Same bundle ID as the iPhone app for a single App Store listing across platforms.
     type: application
     platform: tvOS
     deploymentTarget: "17.0"
@@ -92,7 +92,6 @@ targets:
       - LotsOfMedia/Support/Keychain.swift
       - LotsOfMedia/Support/LossyDecoding.swift
       - LotsOfMedia/Support/LibraryCache.swift
-      - LotsOfMedia/Support/ProStore.swift
       - LotsOfMedia/Support/Haptics.swift
       - LotsOfMedia/Playback/PlaybackDecider.swift
       - Shared/AppTheme.swift
@@ -181,8 +180,6 @@ schemes:
         LotsOfMedia: all
         LotsOfMediaTests: [test]
     run:
-      # Local purchases in the simulator; TestFlight and the App Store use the real product.
-      storeKitConfiguration: StoreKit/LotsOfMedia.storekit
     test:
       targets:
         - LotsOfMediaTests
@@ -204,4 +201,3 @@ schemes:
       targets:
         - LotsOfMediaTVUITests
     run:
-      storeKitConfiguration: StoreKit/LotsOfMedia.storekit

@@ -2,12 +2,11 @@ import AVKit
 import MediaPlayer
 import SwiftUI
 
-/// Live TV & DVR (a Pro feature): a TV guide grid, what's on now, and recordings, with
+/// Live TV & DVR: a TV guide grid, what's on now, and recordings, with
 /// favorite channels, your own channel collections and program categories.
 /// Uses the same LiveTVStore (and filters) as the iPhone app.
 struct TVLiveTVView: View {
     @Environment(TVSession.self) private var session
-    @Environment(ProStore.self) private var store
     @State private var mode: Mode = .guide
     private var now: TVLiveNow { .shared }
     @FocusState private var windowFocused: Bool
@@ -49,9 +48,7 @@ struct TVLiveTVView: View {
 
     var body: some View {
         Group {
-            if !store.isUnlocked {
-                ProPaywallView(feature: .liveTV, inline: true)
-            } else if live.channels.isEmpty || (mode == .guide && live.loadedUntil == .distantPast) {
+            if live.channels.isEmpty || (mode == .guide && live.loadedUntil == .distantPast) {
                 if let error = live.error {
                     VStack(spacing: 20) {
                         Text("Live TV Unavailable").font(.title2.bold())
@@ -154,7 +151,7 @@ struct TVLiveTVView: View {
     #endif
 
     private func refresh(force: Bool) async {
-        guard store.isUnlocked, let api = session.api else { return }
+        guard let api = session.api else { return }
         #if DEBUG
         // Development and screenshots: `-tvLiveSample` shows a made-up guide on servers without a DVR.
         if ProcessInfo.processInfo.arguments.contains("-tvLiveSample"), let id = session.selectedServer?.id ?? session.selectedServerID {

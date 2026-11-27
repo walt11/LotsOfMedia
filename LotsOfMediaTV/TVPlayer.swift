@@ -13,7 +13,7 @@ struct TVPlayRequest: Identifiable {
 }
 
 /// Full-screen playback. Apple's player (Siri Remote scrubbing, chapters, audio and subtitle
-/// menus) for what tvOS plays; the built-in VLC player for the rest, with Pro.
+/// menus) for what tvOS plays; the built-in VLC player for the rest.
 struct TVPlayerView: View {
     @Environment(TVSession.self) private var session
     @Environment(\.dismiss) private var dismiss

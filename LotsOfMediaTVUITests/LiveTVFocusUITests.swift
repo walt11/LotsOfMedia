@@ -24,7 +24,7 @@ final class LiveTVFocusUITests: XCTestCase {
     /// the tab bar; Down from there reaches the filters, and Down again the guide.
     func testBackAndDownRoute() {
         let app = XCUIApplication()
-        app.launchArguments = ["-proUnlocked", "-tvLiveSample", "-tvTab", "live", "-tvMiniSample"]
+        app.launchArguments = ["-tvLiveSample", "-tvTab", "live", "-tvMiniSample"]
         app.launch()
         sleep(6)
         press(.down, times: 2)                       // filters, then the guide's first row
@@ -54,7 +54,7 @@ final class LiveTVFocusUITests: XCTestCase {
     /// still moves correctly), so those steps check the preview band instead.
     func testBackWithoutAChannelPlaying() {
         let app = XCUIApplication()
-        app.launchArguments = ["-proUnlocked", "-tvLiveSample", "-tvTab", "live"]
+        app.launchArguments = ["-tvLiveSample", "-tvTab", "live"]
         app.launch()
         sleep(6)
         press(.down, times: 2)
@@ -88,7 +88,7 @@ final class LivePlayPauseUITests: XCTestCase {
             throw XCTSkip("Set LIVE_URL to a live HLS fixture (tools/live_seek_fixture.py).")
         }
         let app = XCUIApplication()
-        app.launchArguments = ["-proUnlocked", "-tvLiveSample", "-tvTab", "live", "-tvMiniSample",
+        app.launchArguments = ["-tvLiveSample", "-tvTab", "live", "-tvMiniSample",
                                "-tvLiveURL", stream, "-tvLiveDiagnostics", "-tvLiveFull"]
         app.launch()
         sleep(10)
@@ -113,7 +113,7 @@ final class LivePlayPauseUITests: XCTestCase {
             throw XCTSkip("Set LIVE_URL to a live HLS fixture (tools/live_seek_fixture.py).")
         }
         let app = XCUIApplication()
-        app.launchArguments = ["-proUnlocked", "-tvLiveSample", "-tvTab", "live",
+        app.launchArguments = ["-tvLiveSample", "-tvTab", "live",
                                "-tvLiveURL", stream, "-tvLiveDiagnostics"]
         app.launch()
         sleep(6)
@@ -142,7 +142,7 @@ final class LivePlayPauseUITests: XCTestCase {
             throw XCTSkip("Set LIVE_URL to a live HLS fixture (tools/live_seek_fixture.py).")
         }
         let app = XCUIApplication()
-        app.launchArguments = ["-proUnlocked", "-tvLiveSample", "-tvTab", "live", "-tvMiniSample",
+        app.launchArguments = ["-tvLiveSample", "-tvTab", "live", "-tvMiniSample",
                                "-tvLiveURL", stream, "-tvLiveDiagnostics", "-tvLiveFull"]
         app.launch()
         sleep(10)
