@@ -1,3 +1,4 @@
+import CoreImage.CIFilterBuiltins
 import SwiftUI
 
 /// Settings: who's signed in and the server on the left; grouped rows on the right.
@@ -272,6 +273,12 @@ struct TVSettingsView: View {
 
     private var about: some View {
         TVSettingsGroup("About") {
+            NavigationLink { TVWebsiteView(title: "Privacy Policy", url: AppWebsite.privacy) } label: {
+                TVSettingsRow(icon: "hand.raised", tint: .gray, title: "Privacy Policy")
+            }
+            NavigationLink { TVWebsiteView(title: "Support", url: AppWebsite.support) } label: {
+                TVSettingsRow(icon: "questionmark.circle", tint: .gray, title: "Support")
+            }
             NavigationLink { TVAcknowledgementsView() } label: {
                 TVSettingsRow(icon: "doc.text.fill", tint: .gray, title: "Acknowledgements", subtitle: "VLCKit license") {
                     Image(systemName: "chevron.right").font(.callout.weight(.semibold))
@@ -431,6 +438,39 @@ struct TVAvatar: View {
             let loaded = await ImageLoader.shared.image(for: url)
             withAnimation(.easeOut(duration: 0.3)) { image = loaded }
         }
+    }
+}
+
+/// Apple TV provides a QR code and the URL so the page can be opened on another device.
+private struct TVWebsiteView: View {
+    let title: String
+    let url: URL
+
+    private var qrCode: UIImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(url.absoluteString.utf8)
+        guard let output = filter.outputImage,
+              let image = CIContext().createCGImage(output, from: output.extent) else { return nil }
+        return UIImage(cgImage: image)
+    }
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Text(title).font(TVTheme.title())
+            if let qrCode {
+                Image(uiImage: qrCode)
+                    .interpolation(.none)
+                    .resizable()
+                    .frame(width: 240, height: 240)
+                    .padding(18)
+                    .background(.white, in: RoundedRectangle(cornerRadius: 12))
+                    .accessibilityHidden(true)
+                Text("Scan with your phone to open this page.").foregroundStyle(.secondary)
+            }
+            Text(url.absoluteString).font(.callout.monospaced()).multilineTextAlignment(.center)
+                .accessibilityLabel(url.absoluteString)
+        }
+        .padding(60)
     }
 }
 

@@ -60,9 +60,9 @@ enum TVUpNext {
     static let countdown = 10
 
     @MainActor
-    static func next(after item: PlexMetadata, queue: [PlexMetadata], index: Int, session: TVSession) async -> PlexMetadata? {
+    static func next(after item: PlexMetadata, queue: [PlexMetadata], index: Int, api: PlexServerAPI?) async -> PlexMetadata? {
         if queue.indices.contains(index + 1) { return queue[index + 1] }
-        guard item.kind == .episode, let api = session.api else { return nil }
+        guard item.kind == .episode, let api else { return nil }
         return try? await api.episodes(after: item, limit: 1).first
     }
 

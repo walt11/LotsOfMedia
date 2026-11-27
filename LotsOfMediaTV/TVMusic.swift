@@ -42,6 +42,7 @@ final class TVMusicPlayer {
 
     /// A queue player: the next song is lined up behind the current one so it starts without a gap.
     @ObservationIgnored private let player = AVQueuePlayer()
+    @ObservationIgnored private var loadedItem: AVPlayerItem?
     /// The next song, buffering behind the current one.
     @ObservationIgnored private var prepared: (item: AVPlayerItem, index: Int, ratingKey: String, transcode: Bool, sessionID: String)?
     @ObservationIgnored private var preparedObservation: NSKeyValueObservation?
@@ -115,7 +116,10 @@ final class TVMusicPlayer {
 
     func play(_ tracks: [PlexMetadata], start: Int = 0, session: TVSession) {
         let playable = tracks.filter { $0.kind == .track }
-        guard !playable.isEmpty else { return }
+        guard !playable.isEmpty, session.api != nil else { return }
+        finishCurrent(scrobble: false)
+        dropPrepared()
+        pendingStartMs = nil
         // Live TV first: stopping it clears the remote's commands, which the music then takes.
         TVLiveNow.shared.stop()
         reclaim()
@@ -131,7 +135,12 @@ final class TVMusicPlayer {
         guard current != nil else { return }
         reclaim()
         // A restored queue loads its song on the first press of play.
-        if player.currentItem == nil { load(index, startAtMs: pendingStartMs); pendingStartMs = nil; return }
+        if loadedItem == nil || player.currentItem == nil {
+            let start = pendingStartMs ?? timeMs
+            pendingStartMs = nil
+            load(index, startAtMs: start)
+            return
+        }
         player.play(); isPlaying = true; updateNowPlaying()
     }
     func next() {
@@ -202,6 +211,8 @@ final class TVMusicPlayer {
         dropPrepared()
         player.removeAllItems()
         queue = []; index = 0; isPlaying = false; pendingStartMs = nil
+        artwork = nil
+        timeMs = 0; durationMs = 0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         savedKeys = []
         Self.writer.async {
@@ -268,7 +279,7 @@ final class TVMusicPlayer {
         index = i
         let item = queue[i]
         let sid = UUID().uuidString
-        guard let src = source(item, api: api, sessionID: sid) else { return }
+        let src = source(item, api: api, sessionID: sid, forceConversion: restart)
         sessionID = sid
         transcoding = src.transcode
         timeMs = 0
@@ -290,32 +301,40 @@ final class TVMusicPlayer {
         prepareNext()
     }
 
-    private func source(_ item: PlexMetadata, api: PlexServerAPI, sessionID: String) -> (url: URL, transcode: Bool)? {
-        let direct = PlaybackDecider.shouldDirectPlay(item, quality: .original)
-        let url = direct ? PlaybackDecider.directURL(api: api, item: item)
-            : PlaybackDecider.transcodeURL(api: api, item: item, quality: .original, sessionID: sessionID,
-                                           isLocal: session?.isLocalConnection ?? false, music: true)
-        return url.map { ($0, !direct) }
+    private func source(_ item: PlexMetadata, api: PlexServerAPI, sessionID: String,
+                        forceConversion: Bool = false) -> (url: URL, transcode: Bool) {
+        if !forceConversion, PlaybackDecider.shouldDirectPlay(item, quality: .original),
+           let url = PlaybackDecider.directURL(api: api, item: item) {
+            return (url, false)
+        }
+        return (PlaybackDecider.transcodeURL(api: api, item: item, quality: .original, sessionID: sessionID,
+                                            isLocal: session?.isLocalConnection ?? false, music: true), true)
     }
 
     /// Watches the playing song for failure and its end.
     private func attach(_ avItem: AVPlayerItem) {
+        loadedItem = avItem
         statusObservation = avItem.observe(\.status) { [weak self] item, _ in
             guard item.status == .failed else { return }
             DispatchQueue.main.async { self?.songFailed(item) }
         }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
-        endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: avItem, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.trackEnded() }
+        endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: avItem, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, let ended = note.object as? AVPlayerItem, self.loadedItem === ended else { return }
+                self.trackEnded()
+            }
         }
     }
 
     private func loadArtwork(_ item: PlexMetadata) {
         artwork = nil
         updateNowPlaying()
+        let id = sessionID
         Task {
             guard let path = item.parentThumb ?? item.thumb, let url = session?.imageURL(path, width: 600, height: 600),
-                  let image = await ImageLoader.shared.image(for: url), current?.ratingKey == item.ratingKey else { return }
+                  let image = await ImageLoader.shared.image(for: url), sessionID == id,
+                  current?.ratingKey == item.ratingKey else { return }
             artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
             updateNowPlaying()
         }
@@ -338,7 +357,7 @@ final class TVMusicPlayer {
         dropPrepared()
         guard let n, let current = player.currentItem, !TVSleepTimer.shared.atEndOfItem, let api = session?.api else { return }
         let item = queue[n], sid = UUID().uuidString
-        guard let src = source(item, api: api, sessionID: sid) else { return }
+        let src = source(item, api: api, sessionID: sid)
         let avItem = AVPlayerItem(url: src.url)
         avItem.preferredForwardBufferDuration = 60
         player.insert(avItem, after: current)
@@ -348,8 +367,7 @@ final class TVMusicPlayer {
             guard item.status == .failed else { return }
             DispatchQueue.main.async {
                 guard let self, self.prepared?.item === item else { return }
-                self.player.remove(item)
-                self.prepared = nil
+                self.dropPrepared()
             }
         }
     }
@@ -373,7 +391,10 @@ final class TVMusicPlayer {
         timeMs = 0
         durationMs = queue[index].duration ?? 0
         attach(p.item)
-        if p.item.status == .failed { songFailed(p.item) }
+        if p.item.status == .failed {
+            if play { songFailed(p.item) } else { player.pause(); isPlaying = false }
+            return
+        }
         if play { isPlaying = true } else { player.pause(); isPlaying = false }
         lastReport = .distantPast
         saveQueue()
@@ -389,15 +410,27 @@ final class TVMusicPlayer {
         if isPlaying, Date().timeIntervalSince(lastSave) >= 15 { saveQueue() }
     }
 
-    /// A song that won't play: a conversion the server ended is started again at the same point
-    /// (once); otherwise it moves on to the next song.
+    /// Try a compatible stream once, then continue to the next song if it still fails.
     private func songFailed(_ item: AVPlayerItem) {
-        guard player.currentItem === item else { return }
-        if transcoding && !restartedConversion {
+        guard loadedItem === item, player.currentItem === item else { return }
+        if !restartedConversion {
             restartedConversion = true
+            if transcoding, let api = session?.api {
+                let failedSession = sessionID
+                Task { await api.stopTranscode(sessionID: failedSession) }
+            }
             return load(index, startAtMs: timeMs, restart: true)
         }
-        if index + 1 < queue.count { load(index + 1) } else { isPlaying = false; updateNowPlaying() }
+        finishCurrent(scrobble: false)
+        if index + 1 < queue.count {
+            load(index + 1)
+        } else {
+            dropPrepared()
+            player.removeAllItems()
+            isPlaying = false
+            updateNowPlaying()
+            saveQueue()
+        }
     }
 
     private func trackEnded() {
@@ -419,6 +452,8 @@ final class TVMusicPlayer {
     /// Reports go to the connection in use right now, captured before any await, so a profile or
     /// server change can't send this account's progress to another.
     private func finishCurrent(scrobble: Bool) {
+        guard loadedItem != nil else { return }
+        loadedItem = nil
         guard let item = current, let api = session?.api else { return }
         let time = timeMs, id = sessionID, wasTranscoding = transcoding
         Task {
@@ -429,7 +464,7 @@ final class TVMusicPlayer {
     }
 
     private func report(_ state: String) {
-        guard let item = current, let api = session?.api else { return }
+        guard loadedItem != nil, let item = current, let api = session?.api else { return }
         lastReport = Date()
         let time = timeMs, id = sessionID
         Task { await TVPlaybackReporting.report(item, state: state, timeMs: time, sessionID: id, api: api) }

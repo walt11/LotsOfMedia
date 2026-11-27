@@ -111,6 +111,42 @@ struct GreenSwitch: ToggleStyle {
     }
 }
 
+/// Keeps badges at readable sizes, wrapping when the available width changes.
+private struct QualityChipLayout: Layout {
+    let spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrange(subviews, width: proposal.width ?? .infinity).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let positions = arrange(subviews, width: bounds.width).positions
+        for (view, frame) in zip(subviews, positions) {
+            view.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                       anchor: .topLeading, proposal: ProposedViewSize(frame.size))
+        }
+    }
+
+    private func arrange(_ subviews: Subviews, width: CGFloat) -> (size: CGSize, positions: [CGRect]) {
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, usedWidth: CGFloat = 0
+        var positions: [CGRect] = []
+        for view in subviews {
+            let ideal = view.sizeThatFits(.unspecified)
+            let size = ideal.width <= width ? ideal : view.sizeThatFits(ProposedViewSize(width: width, height: nil))
+            if x > 0, x + size.width > width {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            positions.append(CGRect(origin: CGPoint(x: x, y: y), size: size))
+            usedWidth = max(usedWidth, x + size.width)
+            rowHeight = max(rowHeight, size.height)
+            x += size.width + spacing
+        }
+        return (CGSize(width: usedWidth, height: y + rowHeight), positions)
+    }
+}
+
 /// Small rounded labels: NEW, 4K, HDR, DOLBY VISION, 5.1, rating.
 struct QualityChips: View {
     let item: PlexMetadata
@@ -119,8 +155,8 @@ struct QualityChips: View {
     var body: some View {
         let chips = Self.chips(for: item, includeRating: includeRating)
         if !chips.isEmpty {
-            HStack(spacing: 5) {
-                ForEach(chips, id: \.self) { chip in
+            QualityChipLayout(spacing: 5) {
+                ForEach(Array(chips.enumerated()), id: \.offset) { _, chip in
                     Text(chip)
                         .font(.caption2.weight(.semibold))
                         .tracking(0.4)

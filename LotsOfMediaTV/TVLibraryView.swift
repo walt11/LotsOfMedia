@@ -18,6 +18,10 @@ struct TVLibraryView: View {
     @State private var loadedKey = ""
     @State private var items: [PlexMetadata] = []
     @State private var total: Int?
+    @State private var loadFailed = false
+    @State private var failedNextPage = false
+    @State private var jumpTask: Task<Void, Never>?
+    @State private var retry = 0
     /// A page requested for a list that's since changed is dropped, and doesn't hold up the new list.
     @State private var paging = PageRequestState()
     private var loading: Bool { paging.isLoading }
@@ -61,7 +65,22 @@ struct TVLibraryView: View {
                                 sectionRow
                                 if !isPlaylists && !isPhotos { controlRow }
                                 if isPhotos { TVPhotoGrid(items: items) { Task { await loadMore() } } } else { grid }
-                                if loading { ProgressView().frame(maxWidth: .infinity) }
+                                if loading {
+                                    ProgressView().frame(maxWidth: .infinity)
+                                } else if loadFailed {
+                                    VStack(alignment: .leading, spacing: 12) {
+                                        Text("Couldn't load the library.").foregroundStyle(.secondary)
+                                        Button("Try Again") {
+                                            if failedNextPage {
+                                                Task { await loadPage(replace: false, size: pageSize) }
+                                            } else {
+                                                retry += 1
+                                            }
+                                        }.buttonStyle(TVActionStyle())
+                                    }
+                                } else if items.isEmpty {
+                                    Text(emptyMessage).foregroundStyle(.secondary).padding(.top, 40)
+                                }
                             }
                             .padding(.leading, 80)
                             .padding(.trailing, showsLetters ? 0 : 80)
@@ -72,9 +91,10 @@ struct TVLibraryView: View {
                 }
             }
         }
+        .onDisappear { jumpTask?.cancel() }
         .task(id: session.status == .connected) { if session.sections.isEmpty { await session.refreshSections() } }
         .task(id: "\(sectionKey ?? "")-\(session.contentVersion)") { await loadFilters() }
-        .task(id: "\(listKey)-\(session.contentVersion)") {
+        .task(id: "\(listKey)-\(session.contentVersion)-\(retry)") {
             // Same list, just fresher (back from watching something): update it in place so the
             // grid keeps its place and focus instead of starting over at the top.
             if listKey == loadedKey, !items.isEmpty { await refreshInPlace() } else { loadedKey = listKey; await reload() }
@@ -151,23 +171,23 @@ struct TVLibraryView: View {
         Capsule().fill(.white.opacity(0.15)).frame(width: 2, height: 30).padding(.horizontal, 6)
     }
 
+    private var emptyMessage: String {
+        if isPlaylists { return "No playlists yet." }
+        if isPhotos { return "No photos in this library." }
+        return view == .collections ? "No collections in this library." : "Nothing matches these filters."
+    }
+
     private var grid: some View {
-        Group {
-            if items.isEmpty && !loading {
-                Text(isPlaylists ? "No playlists yet." : (view == .collections ? "No collections in this library." : "Nothing matches these filters."))
-                    .foregroundStyle(.secondary).padding(.top, 40)
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 56) {
+            ForEach(items) { item in
+                NavigationLink(value: item) { TVPosterCard(item: item) }.playsOnPlayPause(item)
+                    .buttonStyle(.borderless)
+                    .focused($focusedItem, equals: item.id)
+                    .id(item.id)
+                    .onAppear { if item.id == items.last?.id, !loadFailed { Task { await loadMore() } } }
             }
-            LazyVGrid(columns: columns, alignment: .leading, spacing: 56) {
-                ForEach(items) { item in
-                    NavigationLink(value: item) { TVPosterCard(item: item) }.playsOnPlayPause(item)
-                        .buttonStyle(.borderless)
-                        .focused($focusedItem, equals: item.id)
-                        .id(item.id)
-                        .onAppear { if item.id == items.last?.id { Task { await loadMore() } } }
-                }
-            }
-            .focusSection()
         }
+        .focusSection()
     }
 
     /// # A B C … down the right edge: select a letter to jump there.
@@ -175,8 +195,11 @@ struct TVLibraryView: View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 2) {
                 ForEach(letters, id: \.self) { letter in
-                    Button(letter.title) { Task { await jump(to: letter, proxy: proxy) } }
-                        .buttonStyle(TVLetterStyle())
+                    Button(letter.title) {
+                        jumpTask?.cancel()
+                        jumpTask = Task { await jump(to: letter, proxy: proxy) }
+                    }
+                    .buttonStyle(TVLetterStyle())
                 }
             }
             .padding(.vertical, 30)
@@ -210,9 +233,11 @@ struct TVLibraryView: View {
         genres = []; decades = []
         guard let api = session.api, let section, section.type != "photo" else { return }
         async let g = try? api.container("/library/sections/\(section.key)/genre")
-        async let d = try? api.container("/library/sections/\(section.key)/decade")
-        genres = await g?.directories ?? []
-        decades = section.type == "artist" ? [] : (await d?.directories ?? [])
+        async let d = section.type == "artist" ? nil : try? api.container("/library/sections/\(section.key)/decade")
+        let (genreResult, decadeResult) = await (g, d)
+        guard !Task.isCancelled, self.section?.key == section.key else { return }
+        genres = genreResult?.directories ?? []
+        decades = decadeResult?.directories ?? []
     }
 
     private var filterQuery: [URLQueryItem] {
@@ -226,49 +251,31 @@ struct TVLibraryView: View {
 
     /// What's being listed; a change starts the grid over.
     private var listKey: String {
-        "\(sectionKey ?? "")-\(view)-\(sort.key)-\(unwatchedOnly)-\(genre?.key ?? "")-\(decade?.key ?? "")-\(only4K)"
+        "\(isPlaylists ? Self.playlistsKey : section?.key ?? "")-\(view)-\(sort.key)-\(unwatchedOnly)-\(genre?.key ?? "")-\(decade?.key ?? "")-\(only4K)"
     }
 
-    /// Reloads what's already shown (watched marks, progress) in one request, keeping its length.
+    /// Reloads the entries already on screen, keeping scroll position and focus.
     private func refreshInPlace() async {
-        guard let api = session.api else { return }
-        let key = listKey
-        if isPlaylists {
-            let fresh = ((try? await api.playlists()) ?? []).filter { $0.playlistType != "photo" }
-            guard key == listKey, !fresh.isEmpty else { return }
-            items = fresh; total = fresh.count
-            return
-        }
-        guard let section, !loading else { return }
-        let mode = view
-        let path = mode == .collections ? "/library/sections/\(section.key)/collections" : "/library/sections/\(section.key)/all"
-        var query = [URLQueryItem(name: "sort", value: section.type == "photo" ? "originallyAvailableAt:desc" : mode == .collections ? "titleSort" : sort.key)]
-        if mode == .all { query += filterQuery }
-        let count = max(items.count, pageSize)
-        guard let page = try? await api.page(path, start: 0, size: count, query: query), key == listKey else { return }
-        items = page.metadata
-        total = page.totalSize ?? (page.metadata.count < count ? items.count : nil)
+        await loadPage(replace: true, size: max(items.count, pageSize))
     }
 
     private func reload() async {
         items = []; total = nil; letters = []
+        loadFailed = false
+        failedNextPage = false
+        jumpTask?.cancel()
         paging.reset()
-        if isPlaylists {
-            guard let api = session.api, let request = paging.begin() else { return }
-            defer { paging.finish(request) }
-            let lists = ((try? await api.playlists()) ?? []).filter { $0.playlistType != "photo" }
-            guard request == paging.generation else { return }
-            items = lists
-            total = lists.count
-            return
-        }
-        await loadMore()
+        let generation = paging.generation
+        await loadPage(replace: true, size: pageSize)
+        guard !Task.isCancelled, generation == paging.generation else { return }
         if view == .all && sort.key == "titleSort" && !isPhotos { await loadLetters() }
     }
 
     private func loadLetters() async {
         guard let api = session.api, let section else { return }
+        let key = listKey, generation = paging.generation
         guard let (body, _) = try? await api.data("/library/sections/\(section.key)/firstCharacter", query: filterQuery),
+              !Task.isCancelled, key == listKey, generation == paging.generation,
               let root = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
               let container = root["MediaContainer"] as? [String: Any],
               let dirs = container["Directory"] as? [[String: Any]] else { return }
@@ -279,33 +286,59 @@ struct TVLibraryView: View {
         }
     }
 
-    /// `size`: how many to fetch, when more than a page is needed at once.
     private func loadMore(size: Int? = nil) async {
-        guard !isPlaylists, let api = session.api, let section, total.map({ items.count < $0 }) ?? true,
+        guard !isPlaylists, !loadFailed, total.map({ items.count < $0 }) ?? true else { return }
+        await loadPage(replace: false, size: size ?? pageSize)
+    }
+
+    private func loadPage(replace: Bool, size: Int) async {
+        guard !Task.isCancelled, loadedKey == listKey, let api = session.api,
               let request = paging.begin() else { return }
         defer { paging.finish(request) }
-        let key = section.key, mode = view
-        let path = mode == .collections ? "/library/sections/\(key)/collections" : "/library/sections/\(key)/all"
-        // Photos: newest first, albums and photos together.
-        var query = [URLQueryItem(name: "sort", value: section.type == "photo" ? "originallyAvailableAt:desc" : mode == .collections ? "titleSort" : sort.key)]
-        if mode == .all { query += filterQuery }
-        let count = size ?? pageSize
-        guard let page = try? await api.page(path, start: items.count, size: count, query: query),
-              request == paging.generation else { return }
-        items += page.metadata
-        total = page.totalSize ?? (page.metadata.count < count ? items.count : nil)
+        let key = listKey
+        do {
+            if isPlaylists {
+                let lists = try await api.playlists().filter { $0.playlistType != "photo" }
+                guard !Task.isCancelled, key == listKey, request == paging.generation else { return }
+                items = lists
+                total = lists.count
+            } else {
+                guard let section else { return }
+                let mode = view
+                let path = mode == .collections ? "/library/sections/\(section.key)/collections" : "/library/sections/\(section.key)/all"
+                var query = [URLQueryItem(name: "sort", value: isPhotos ? "originallyAvailableAt:desc" : mode == .collections ? "titleSort" : sort.key)]
+                if mode == .all { query += filterQuery }
+                let page = try await api.page(path, start: replace ? 0 : items.count, size: size, query: query)
+                guard !Task.isCancelled, key == listKey, request == paging.generation else { return }
+                if replace { items = page.metadata } else { items += page.metadata }
+                total = page.metadata.isEmpty ? items.count : page.totalSize ?? (page.metadata.count < size ? items.count : nil)
+            }
+            loadFailed = false
+            failedNextPage = false
+        } catch {
+            guard !Task.isCancelled, key == listKey, request == paging.generation else { return }
+            loadFailed = true
+            failedNextPage = !replace
+        }
     }
 
     /// Loads pages up to the letter's first item, then moves focus (and the grid) there.
     private func jump(to letter: Letter, proxy: ScrollViewProxy) async {
+        guard letters.contains(letter) else { return }
+        let key = listKey, generation = paging.generation
         let offset = letters.prefix { $0 != letter }.reduce(0) { $0 + $1.size }
-        while items.count <= offset, total.map({ items.count < $0 }) ?? true {
+        while items.count <= offset, !loadFailed, total.map({ items.count < $0 }) ?? true {
+            guard !Task.isCancelled, key == listKey, generation == paging.generation else { return }
+            if loading {
+                try? await Task.sleep(for: .milliseconds(50))
+                continue
+            }
             let before = items.count
             // Everything up to the letter in one request (or a few, in a very large library).
             await loadMore(size: min(max(offset + pageSize - before, pageSize), 2000))
             if items.count == before { break }
         }
-        guard items.indices.contains(offset) else { return }
+        guard !Task.isCancelled, key == listKey, generation == paging.generation, items.indices.contains(offset) else { return }
         let id = items[offset].id
         proxy.scrollTo(id, anchor: .top)
         focusedItem = id

@@ -1088,7 +1088,7 @@ extension JellyfinBridge {
             return api.url("/Audio/\(item.ratingKey)/master.m3u8", query: q, includeToken: true)
         }
         q += [.init(name: "VideoCodec", value: allowHEVC ? "h264,hevc" : "h264"), .init(name: "AudioCodec", value: "aac,ac3,eac3"),
-              .init(name: "SegmentContainer", value: "ts"), .init(name: "TranscodingMaxAudioChannels", value: "6"),
+              .init(name: "SegmentContainer", value: allowHEVC ? "mp4" : "ts"), .init(name: "TranscodingMaxAudioChannels", value: "6"),
               .init(name: "BreakOnNonKeyFrames", value: "false")]
         if let audio = part?.selectedAudio { q.append(.init(name: "AudioStreamIndex", value: "\(audio.id % 1000)")) }
         if let burnSubtitleID {

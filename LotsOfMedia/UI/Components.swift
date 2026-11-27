@@ -580,7 +580,10 @@ struct OfflineBanner: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Label(title, systemImage: "wifi.slash").font(.subheadline.bold())
                         Text(detail).font(.caption).foregroundStyle(.secondary)
-                        HStack { retry; downloadsButton(labelled: true) }
+                        ViewThatFits(in: .horizontal) {
+                            HStack { retry; downloadsButton(labelled: true) }
+                            VStack(alignment: .leading) { retry; downloadsButton(labelled: true) }
+                        }
                     }
                 } else if verticalSize == .compact {
                     // Landscape: one short line, to leave room for the page.
@@ -789,8 +792,9 @@ struct MiniPlayerBar: View {
             }
             .overlay(alignment: .bottom) {
                 GeometryReader { geo in
+                    let fraction = player.duration > 0 ? player.currentTime / player.duration : 0
                     Rectangle().fill(.white.opacity(0.85))
-                        .frame(width: player.duration > 0 ? geo.size.width * player.currentTime / player.duration : 0, height: 2)
+                        .frame(width: fraction.isFinite ? geo.size.width * min(max(fraction, 0), 1) : 0, height: 2)
                 }
                 .frame(height: 2)
                 .padding(.horizontal, 14)

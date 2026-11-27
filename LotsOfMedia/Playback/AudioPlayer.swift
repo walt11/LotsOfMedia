@@ -236,8 +236,13 @@ final class AudioPlayer {
         queue = entries
         index = min(max(0, saved.index), entries.count - 1)
         shuffled = saved.shuffled
-        originalOrder = saved.originalOrder.compactMap { entries.indices.contains($0) ? entries[$0].id : nil }
-        if originalOrder.count != entries.count { originalOrder = entries.map(\.id) }
+        // Songs added while shuffled have no saved position. Keep the known order;
+        // unshuffling puts the new songs after it in queue order.
+        var seen = Set<Int>()
+        originalOrder = saved.originalOrder.compactMap { position in
+            guard entries.indices.contains(position), seen.insert(position).inserted else { return nil }
+            return entries[position].id
+        }
         currentTime = saved.position
         // The checkpoint is newer than the queue file when only the position moved.
         if let data = try? Data(contentsOf: Self.checkpointURL),

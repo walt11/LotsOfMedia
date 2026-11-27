@@ -145,8 +145,11 @@ enum DiagnosticsBuilder {
                              ("Address", input.isDownloaded ? nil : uri.flatMap { URL(string: $0)?.host }),
                              ("Network", NetworkMonitor.shared.isConnected ? (NetworkMonitor.shared.usesWiFi ? "Wi-Fi" : "Cellular") : "Offline")])
 
-        if input.isConverting, let sid = input.transcodeSessionID, let api = ServerDirectory.shared.api(for: input.serverID),
-           let session = await transcodeSession(api: api, id: sid) {
+        var conversion: [String: Any]?
+        if input.isConverting, let sid = input.transcodeSessionID, let api = ServerDirectory.shared.api(for: input.serverID), !api.isJellyfin {
+            conversion = await transcodeSession(api: api, id: sid)
+        }
+        if let session = conversion {
             d.add("Server Conversion", [
                 ("Video", decision(session["videoDecision"], from: session["sourceVideoCodec"], to: session["videoCodec"])),
                 ("Audio", decision(session["audioDecision"], from: session["sourceAudioCodec"], to: session["audioCodec"])),
@@ -170,9 +173,7 @@ enum DiagnosticsBuilder {
         facts.relay = connection?.relay == true
         facts.cellular = NetworkMonitor.shared.isConnected && !NetworkMonitor.shared.usesWiFi
         facts.stalls = input.playerItem?.accessLog()?.events.last?.numberOfStalls ?? 0
-        if input.isConverting, let sid = input.transcodeSessionID, let api = ServerDirectory.shared.api(for: input.serverID) {
-            facts.serverSpeed = await transcodeSession(api: api, id: sid)?["speed"] as? Double
-        }
+        facts.serverSpeed = conversion?["speed"] as? Double
         let tips = advice(facts)
         if !tips.isEmpty { d.add("Improve Playback", tips.enumerated().map { ("Tip \($0.offset + 1)", Optional($0.element)) }) }
 

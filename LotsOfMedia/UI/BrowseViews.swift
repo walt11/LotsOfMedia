@@ -846,8 +846,8 @@ struct LibrarySectionView: View {
                     guard generation == paging.generation, !Task.isCancelled else { return }
                     nextOffset += page.metadata.count
                     items += page.metadata.filter { $0.kind == .track }
-                    if total == nil { total = page.totalSize }
-                    if page.metadata.count < size || (total.map { nextOffset >= $0 } ?? false) { break }
+                    total = page.totalSize ?? total
+                    if page.metadata.isEmpty || (total.map { nextOffset >= $0 } ?? (page.metadata.count < size)) { break }
                 }
                 total = nextOffset
             } catch { if generation == paging.generation && !Task.isCancelled { self.error = error.localizedDescription } }
@@ -1475,7 +1475,7 @@ struct SearchView: View {
                     }.padding(.horizontal)
                 }
                 if onDeviceOnly || !app.isOnline {
-                    if trimmed.count >= 2 && offlineMatches.isEmpty {
+                    if trimmed.count >= 2 && matches.isEmpty {
                         EmptyStateView(title: "No Downloads Match", systemImage: "arrow.down.circle",
                                        message: app.isOnline ? "Nothing downloaded matches “\(trimmed)”." : "Nothing downloaded matches “\(trimmed)”. Connect to search your whole library.")
                     } else if trimmed.count < 2 {
@@ -1512,11 +1512,11 @@ struct SearchView: View {
         .titleWithDownloadStatus("Search")
         .searchable(text: $query, prompt: mediaMode == .music ? "Artists, albums, songs…" : "Movies, shows, episodes…")
         .onSubmit(of: .search) { remember() }
-        .task {
+        .task(id: historyKey) {
             recents = UserDefaults.standard.stringArray(forKey: historyKey) ?? []
         }
         .onChange(of: query) { showAllOffline = false }
-        .task(id: "\(query)-\(retry)-\(onDeviceOnly)-\(app.api?.baseURL.absoluteString ?? "")") {
+        .task(id: "\(query)-\(retry)-\(onDeviceOnly)-\(app.isOnline)-\(historyKey)-\(app.api?.baseURL.absoluteString ?? "")") {
             hubs = []; error = nil; searching = false
             // Offline (or filtered to this device), results come from downloads alone.
             guard let api = app.api, app.isOnline, !onDeviceOnly else { return }
@@ -1535,6 +1535,7 @@ struct SearchView: View {
                         let dirs = (try? await api.container("/library/sections/\(library.key)/genre").directories) ?? []
                         found += dirs.map { GenreEntry(sectionKey: library.key, key: $0.key, title: $0.title) }
                     }
+                    try Task.checkCancellation()
                     var seenGenres = Set<String>()
                     genres = found.filter { seenGenres.insert($0.title.lowercased()).inserted }
                     var seen = Set<String>()

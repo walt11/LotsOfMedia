@@ -18,3 +18,11 @@ enum AppTheme {
     /// Distinct from the accent so "converting" never reads as "downloading".
     static let converting = Color(red: 0.66, green: 0.55, blue: 1.0)
 }
+
+
+/// Public pages for the app, also listed in App Store Connect.
+enum AppWebsite {
+    private static let base = URL(string: "https://walt11.github.io/LotsOfMedia/")!
+    static let privacy = base.appendingPathComponent("privacy-policy.html")
+    static let support = base.appendingPathComponent("support.html")
+}

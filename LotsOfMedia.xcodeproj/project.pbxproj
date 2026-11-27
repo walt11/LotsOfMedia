@@ -159,6 +159,8 @@
 		FBD368CB69A9D9E33DF7CF38 /* ProStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 993E821912F5A76158B019A9 /* ProStore.swift */; };
 		FE84E6E61704890F188955F5 /* TVDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C558F82DD6F59C51A839290 /* TVDetailView.swift */; };
 		FFB9CCCD996C875931B2AACF /* StorageCleanupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC129183F3A13568AD1EC08D /* StorageCleanupView.swift */; };
+		0A2711190000000000000012 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 0A2711190000000000000011 /* PrivacyInfo.xcprivacy */; };
+		0A2711190000000000000022 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 0A2711190000000000000021 /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -380,6 +382,8 @@
 		F57281EA11C0F9310EA264D5 /* BrowseViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseViews.swift; sourceTree = "<group>"; };
 		F9B03364159096CBCE8FE79B /* ThemeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeTests.swift; sourceTree = "<group>"; };
 		FD9294F5D64515363DF66F89 /* AudioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayer.swift; sourceTree = "<group>"; };
+		0A2711190000000000000011 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = LotsOfMedia/Resources/PrivacyInfo.xcprivacy; sourceTree = SOURCE_ROOT; };
+		0A2711190000000000000021 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = LotsOfMediaTV/PrivacyInfo.xcprivacy; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -914,6 +918,7 @@
 			files = (
 				71632E5146092C4E0C51C6DE /* Assets.xcassets in Resources */,
 				D5F37B255C003DF4F705BDD3 /* LGPL-2.1.txt in Resources */,
+				0A2711190000000000000022 /* PrivacyInfo.xcprivacy in Resources */,
 				30291E52726FECD9C01C8849 /* Localizable.xcstrings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -924,6 +929,7 @@
 			files = (
 				F5D05647171E32695C9343A3 /* Assets.xcassets in Resources */,
 				98B5404EE81CBDDBBA34D927 /* LGPL-2.1.txt in Resources */,
+				0A2711190000000000000012 /* PrivacyInfo.xcprivacy in Resources */,
 				44F4AFAFA48A637FF3166E95 /* Localizable.xcstrings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

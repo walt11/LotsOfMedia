@@ -72,7 +72,8 @@ struct TVPhotoViewer: View {
     @State var index: Int
     @State private var slideshow = false
     @State private var showInfo = false
-    @State private var image: UIImage?
+    @State private var result: (index: Int, image: UIImage?)?
+    @State private var retry = 0
     static let slideSeconds = 6
 
     private var photo: PlexMetadata? { photos.indices.contains(index) ? photos[index] : nil }
@@ -80,15 +81,23 @@ struct TVPhotoViewer: View {
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            if let image {
-                Image(uiImage: image).resizable().aspectRatio(contentMode: .fit)
-                    .ignoresSafeArea()
-                    .id(index)
-                    .transition(.opacity)
+            if let result, result.index == index {
+                if let image = result.image {
+                    Image(uiImage: image).resizable().aspectRatio(contentMode: .fit)
+                        .ignoresSafeArea()
+                        .id(index)
+                        .transition(.opacity)
+                } else {
+                    VStack(spacing: 12) {
+                        Label("Photo Unavailable", systemImage: "photo")
+                            .font(.title3.bold())
+                        Text("Press Select to try again.").foregroundStyle(.secondary)
+                    }
+                }
             } else {
-                ProgressView()
+                ProgressView("Loading photo…")
             }
-            if showInfo || slideshow, let photo {
+            if showInfo || slideshow, let photo, result?.index == index, result?.image != nil {
                 VStack {
                     Spacer()
                     HStack(spacing: 16) {
@@ -102,7 +111,6 @@ struct TVPhotoViewer: View {
                     .background(LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .top, endPoint: .bottom))
                 }
                 .ignoresSafeArea()
-                .opacity(showInfo || !slideshow ? 1 : 0.0)
             }
         }
         .focusable()
@@ -113,10 +121,13 @@ struct TVPhotoViewer: View {
             default: break
             }
         }
-        .onTapGesture { withAnimation { showInfo.toggle() } }
+        .onTapGesture {
+            if result?.index == index, result?.image == nil { retry += 1 }
+            else { withAnimation { showInfo.toggle() } }
+        }
         .onPlayPauseCommand { slideshow.toggle() }
         .onExitCommand { dismiss() }
-        .task(id: index) { await loadImage() }
+        .task(id: "\(index)-\(retry)") { await loadImage() }
         // Slideshow: the next photo every few seconds, looping, until stopped.
         .task(id: slideshow) {
             while slideshow, !Task.isCancelled {
@@ -136,11 +147,14 @@ struct TVPhotoViewer: View {
     }
 
     private func loadImage() async {
-        guard let photo else { return }
-        let path = photo.media.first?.parts.first?.key ?? photo.thumb
-        guard let url = session.imageURL(path, width: 3840, height: 2160) else { return }
-        let loaded = await ImageLoader.shared.image(for: url)
-        guard photo.id == self.photo?.id else { return }
-        withAnimation(.easeInOut(duration: 0.5)) { image = loaded }
+        let requestedIndex = index
+        result = nil
+        let path = photo?.media.first?.parts.first?.key ?? photo?.thumb
+        var loaded: UIImage?
+        if let url = session.imageURL(path, width: 3840, height: 2160) {
+            loaded = await ImageLoader.shared.image(for: url)
+        }
+        guard !Task.isCancelled, requestedIndex == index else { return }
+        withAnimation(.easeInOut(duration: 0.5)) { result = (requestedIndex, loaded) }
     }
 }

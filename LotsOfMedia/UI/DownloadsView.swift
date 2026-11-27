@@ -1241,6 +1241,8 @@ struct SettingsView: View {
             }
             SettingsTransferSection()
             Section {
+                Link("Privacy Policy", destination: AppWebsite.privacy)
+                Link("Support", destination: AppWebsite.support)
                 NavigationLink("Acknowledgements") { AcknowledgementsView() }
             }
             Section {

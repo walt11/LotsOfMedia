@@ -32,12 +32,6 @@ struct TVPlayerView: View {
 
 /// Progress reports shared by both players.
 enum TVPlaybackReporting {
-    /// Tells the server where playback is; a stop past 90% also marks it watched.
-    @MainActor
-    static func report(_ item: PlexMetadata?, state: String, timeMs: Int, sessionID: String, session: TVSession) async {
-        await report(item, state: state, timeMs: timeMs, sessionID: sessionID, api: session.api)
-    }
-
     /// Reports against a given connection (the one playback started on, even if the session has moved on).
     static func report(_ item: PlexMetadata?, state: String, timeMs: Int, sessionID: String, api: PlexServerAPI?) async {
         guard let item, let api, timeMs > 0 else { return }
@@ -106,6 +100,7 @@ final class TVPlaybackController: NSObject {
     private var upNextHidden = false
     private var upNextCountdown = TVUpNextCountdown()
     private let session: TVSession
+    private let playbackAPI: PlexServerAPI?
     private let onFinish: () -> Void
     private var index: Int
     private let resumeFirst: Bool
@@ -143,6 +138,7 @@ final class TVPlaybackController: NSObject {
         index = request.start
         resumeFirst = request.resume
         self.session = session
+        playbackAPI = session.api
         self.onFinish = onFinish
         super.init()
         player.audiovisualBackgroundPlaybackPolicy = .pauses
@@ -178,10 +174,10 @@ final class TVPlaybackController: NSObject {
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         if let selectionObserver { NotificationCenter.default.removeObserver(selectionObserver) }
-        let finishedItem = current, time = currentMs, id = sessionID, wasTranscoding = transcoding
+        let finishedItem = current, time = currentMs, id = sessionID, wasTranscoding = transcoding, api = playbackAPI
         Task { [session] in
-            await Self.report(finishedItem, state: "stopped", timeMs: time, sessionID: id, session: session)
-            if wasTranscoding, let api = session.api { await api.stopTranscode(sessionID: id) }
+            await TVPlaybackReporting.report(finishedItem, state: "stopped", timeMs: time, sessionID: id, api: api)
+            if wasTranscoding, let api { await api.stopTranscode(sessionID: id) }
             session.contentVersion += 1
         }
     }
@@ -189,8 +185,8 @@ final class TVPlaybackController: NSObject {
     private func pauseForBackground() {
         guard !stopped, player.rate != 0 else { return }
         player.pause()
-        let item = current, time = currentMs, id = sessionID
-        Task { [session] in await Self.report(item, state: "paused", timeMs: time, sessionID: id, session: session) }
+        let item = current, time = currentMs, id = sessionID, api = playbackAPI
+        Task { await TVPlaybackReporting.report(item, state: "paused", timeMs: time, sessionID: id, api: api) }
     }
 
     private var currentMs: Int {
@@ -200,7 +196,7 @@ final class TVPlaybackController: NSObject {
 
     /// `startAtMs` restarts at a given point (after a failure); `compatible` asks the server to convert.
     private func load(_ i: Int, resume: Bool, startAtMs: Int? = nil, compatible: Bool = false) async {
-        guard !stopped, let api = session.api, queue.indices.contains(i) else { return onFinish() }
+        guard !stopped, let api = playbackAPI, queue.indices.contains(i) else { return onFinish() }
         let id = UUID()
         loadID = id
         if i != index || current == nil { triedCompatible = false; restartedConversion = false; avoidHEVC = false }
@@ -228,9 +224,9 @@ final class TVPlaybackController: NSObject {
         if wasTranscoding, startAtMs != nil { Task { await api.stopTranscode(sessionID: previousSession) } }
         upNext = nil; upNextHidden = false; upNextCountdown.reset(); actionsShown = nil
         viewController?.contextualActions = []
-        Task { [queue, index, session] in
-            let next = await TVUpNext.next(after: item, queue: queue, index: index, session: session)
-            if current?.ratingKey == item.ratingKey { upNext = next }
+        Task { [queue, index] in
+            let next = await TVUpNext.next(after: item, queue: queue, index: index, api: api)
+            if !stopped, loadID == id { upNext = next }
         }
         // A subtitle Apple's player can't draw (an external file, PGS…) is burned in by the server.
         let burn = TVPlaybackReporting.burnSubtitleID(for: item)
@@ -253,10 +249,17 @@ final class TVPlaybackController: NSObject {
         // A failed stream recovers instead of leaving a stuck player.
         streamOpened = false
         statusObservation = avItem.observe(\.status) { [weak self] item, _ in
-            switch item.status {
-            case .readyToPlay: DispatchQueue.main.async { self?.streamOpened = true; self?.trackLanguages(of: item) }
-            case .failed: DispatchQueue.main.async { self?.playbackFailed(item.error) }
-            default: break
+            let status = item.status
+            DispatchQueue.main.async {
+                guard let self, !self.stopped, self.loadID == id, self.player.currentItem === item else { return }
+                switch status {
+                case .readyToPlay:
+                    self.streamOpened = true
+                    self.trackLanguages(of: item)
+                case .failed:
+                    self.playbackFailed(item.error)
+                default: break
+                }
             }
         }
         if let offset = startAtMs ?? (resume ? item.viewOffset : nil), offset > 0 {
@@ -303,8 +306,9 @@ final class TVPlaybackController: NSObject {
         let scope = languageScope
         Task {
             if !transcoding { await TVLanguagePreference.apply(scope: scope, to: avItem) }
-            guard player.currentItem === avItem else { return }
-            languageBaseline = await TVLanguagePreference.selection(in: avItem)
+            let baseline = await TVLanguagePreference.selection(in: avItem)
+            guard !stopped, player.currentItem === avItem else { return }
+            languageBaseline = baseline
             selectionObserver = NotificationCenter.default.addObserver(forName: AVPlayerItem.mediaSelectionDidChangeNotification,
                                                                        object: avItem, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.selectionChanged(avItem) }
@@ -315,7 +319,8 @@ final class TVPlaybackController: NSObject {
     private func selectionChanged(_ avItem: AVPlayerItem) {
         let scope = languageScope
         Task {
-            guard let now = await TVLanguagePreference.selection(in: avItem), let before = languageBaseline else { return }
+            guard let now = await TVLanguagePreference.selection(in: avItem), !stopped,
+                  player.currentItem === avItem, let before = languageBaseline else { return }
             if now.audio != before.audio { TVLanguagePreference.rememberAudio(now.audio, scope: scope) }
             if now.subtitle != before.subtitle { TVLanguagePreference.rememberSubtitle(now.subtitle, scope: scope) }
             languageBaseline = now
@@ -354,8 +359,8 @@ final class TVPlaybackController: NSObject {
         guard let current, Date().timeIntervalSince(lastReport) >= 10 else { return }
         lastReport = Date()
         let state = player.timeControlStatus == .paused ? "paused" : "playing"
-        let time = currentMs, id = sessionID
-        Task { [session] in await Self.report(current, state: state, timeMs: time, sessionID: id, session: session) }
+        let time = currentMs, id = sessionID, api = playbackAPI
+        Task { await TVPlaybackReporting.report(current, state: state, timeMs: time, sessionID: id, api: api) }
     }
 
     /// The player's own contextual buttons: Up Next (with a countdown) at the credits, otherwise
@@ -418,9 +423,10 @@ final class TVPlaybackController: NSObject {
     }
 
     private func finishCurrent() {
-        let finished = current, id = sessionID, wasTranscoding = transcoding, api = session.api
+        let finished = current, id = sessionID, wasTranscoding = transcoding, api = playbackAPI, position = currentMs
+        transcoding = false
         Task {
-            await TVPlaybackReporting.reportFinished(finished, sessionID: id, api: api)
+            await TVPlaybackReporting.reportFinished(finished, sessionID: id, api: api, fallbackMs: position)
             if wasTranscoding, let api { await api.stopTranscode(sessionID: id) }
         }
         current = nil
@@ -445,10 +451,6 @@ final class TVPlaybackController: NSObject {
             session.contentVersion += 1
             onFinish()
         }
-    }
-
-    private static func report(_ item: PlexMetadata?, state: String, timeMs: Int, sessionID: String, session: TVSession) async {
-        await TVPlaybackReporting.report(item, state: state, timeMs: timeMs, sessionID: sessionID, session: session)
     }
 
     private func metadata(for item: PlexMetadata, artwork: UIImage?) -> [AVMetadataItem] {

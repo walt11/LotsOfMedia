@@ -224,6 +224,24 @@ final class ShuffleBehaviorTests: XCTestCase {
         return try PlexServerAPI.decodeContainer(data).metadata
     }
 
+    @MainActor func testRestoringEditedShuffleKeepsOriginalOrder() throws {
+        let player = AudioPlayer.shared
+        player.stop()
+        player.saveSession(wait: true)
+        defer { player.stop(); player.saveSession(wait: true) }
+        let tracks = try songs(3)
+        let saved = AudioPlayer.SavedSession(
+            items: [tracks[1], tracks[2], tracks[0]].map { .init(track: $0, serverID: "s") },
+            index: 0, position: 0, shuffled: true, originalOrder: [2, 0], snapshotID: UUID()
+        )
+        try JSONEncoder().encode(saved).write(to: AudioPlayer.sessionURL, options: .atomic)
+        player.restoreSession()
+        player.toggleShuffle()
+
+        XCTAssertEqual(player.queue.map(\.track.ratingKey), ["1", "2", "3"])
+        XCTAssertEqual(player.current?.track.ratingKey, "2")
+    }
+
     @MainActor func testShuffleFromTheLastSongShufflesTheRestOfThePlaylist() throws {
         let player = AudioPlayer.shared
         defer { player.stop(); if player.shuffled { player.toggleShuffle() } }

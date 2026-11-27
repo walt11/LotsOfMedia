@@ -51,7 +51,7 @@ struct TVLiveTVView: View {
         Group {
             if !store.isUnlocked {
                 ProPaywallView(feature: .liveTV, inline: true)
-            } else if live.channels.isEmpty {
+            } else if live.channels.isEmpty || (mode == .guide && live.loadedUntil == .distantPast) {
                 if let error = live.error {
                     VStack(spacing: 20) {
                         Text("Live TV Unavailable").font(.title2.bold())
@@ -369,6 +369,7 @@ struct TVGuideGrid<Menu: View>: View {
     @ViewBuilder let channelMenu: (LiveChannel) -> Menu
     @State private var windowStart = LiveTVStore.slot(containing: Date())
     @State private var focusedRow = 0
+    @State private var enteredGuide = false
     @FocusState private var focus: GuideFocus?
     /// The time moving up and down keeps to: set by moving across a row (or entering the guide),
     /// so each row lands on what's on at that time instead of drifting later.
@@ -393,7 +394,7 @@ struct TVGuideGrid<Menu: View>: View {
 
     var body: some View {
         GeometryReader { geo in
-            let gridWidth = geo.size.width - channelWidth - 12
+            let gridWidth = max(0, geo.size.width - channelWidth - 12)
             let perSecond = gridWidth / Self.window
             ScrollViewReader { proxy in
                 VStack(alignment: .leading, spacing: 8) {
@@ -406,7 +407,7 @@ struct TVGuideGrid<Menu: View>: View {
                         // Redrawn every minute so the shading, the now line and what's on stay current.
                         TimelineView(.everyMinute) { _ in
                             LazyVStack(alignment: .leading, spacing: 6) {
-                                ForEach(Array(channels.enumerated()), id: \.element.id) { i, channel in
+                                ForEach(channels) { channel in
                                     row(channel, gridWidth: gridWidth, perSecond: perSecond).id(channel.id)
                                 }
                             }
@@ -427,6 +428,14 @@ struct TVGuideGrid<Menu: View>: View {
                     }
                 }
                 .onChange(of: focus) { old, new in
+                    if new != nil, !enteredGuide, let first = channels.first {
+                        enteredGuide = true
+                        let initial = currentProgramFocus(for: first)
+                        if new != initial {
+                            focus = initial
+                            return
+                        }
+                    }
                     if case .airing(let id)? = new, let landed = airing(withID: id) {
                         if redirected {
                             redirected = false
@@ -607,7 +616,11 @@ struct TVGuideGrid<Menu: View>: View {
         anchorTime = nil
         guard let first = channels.first else { return }
         withAnimation { proxy.scrollTo(first.id, anchor: .top) }
-        focus = live.current(on: first.id).map { .airing($0.id) } ?? .channel(first.id)
+        focus = currentProgramFocus(for: first)
+    }
+
+    private func currentProgramFocus(for channel: LiveChannel) -> GuideFocus {
+        live.current(on: channel.id).map { .airing($0.id) } ?? .channel(channel.id)
     }
 
     /// The channel of the row a focus is in.

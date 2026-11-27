@@ -230,10 +230,11 @@ final class TVSession {
     /// Tries a few times before giving up: on first launch tvOS asks for local network access
     /// while the first attempt is under way, so that attempt can fail on its own.
     func connect() async {
+        guard selectedServer != nil else { return }
         let gen = generation
         for attempt in 0..<3 {
             await connectOnce(gen)
-            if gen != generation || status == .connected || Task.isCancelled { return }
+            if gen != generation || status == .connected || Task.isCancelled || attempt == 2 { return }
             try? await Task.sleep(for: .seconds(attempt == 0 ? 2 : 5))
         }
     }
@@ -248,7 +249,7 @@ final class TVSession {
             guard gen == generation else { return }
             guard let url = URL(string: uri) else { throw PlexError.noReachableConnection }
             let api = PlexServerAPI(baseURL: url, token: server.accessToken, serverID: server.id)
-            let loaded = (try? await api.sections()) ?? []
+            let loaded = try await api.sections()
             guard gen == generation else { return }
             self.api = api
             sections = loaded

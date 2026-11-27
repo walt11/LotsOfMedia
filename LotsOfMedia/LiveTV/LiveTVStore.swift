@@ -132,6 +132,7 @@ final class LiveTVStore {
     private static func hasDVRKey(_ serverID: String) -> String { "liveTV.hasDVR." + serverID }
 
     private var loadingMore = false
+    private var guideRevision = UUID()
     private var contextToken: String?
     private var contextGeneration = UUID()
 
@@ -187,6 +188,10 @@ final class LiveTVStore {
             guard generation == contextGeneration, !Task.isCancelled else { return }
             guard let found else {
                 dvr = nil
+                channels = []
+                airings = [:]
+                loadedUntil = .distantPast
+                guideRevision = UUID()
                 UserDefaults.standard.set(false, forKey: Self.hasDVRKey(api.serverID))
                 return
             }
@@ -196,6 +201,10 @@ final class LiveTVStore {
                 let loaded = try await api.liveChannels(epg: found.epgIdentifier)
                 guard generation == contextGeneration, !Task.isCancelled else { return }
                 channels = loaded
+            }
+            if channels.isEmpty {
+                error = "Your server's DVR has no channels."
+                return
             }
             // A stale guide (left open for a while) restarts at the current half hour.
             let currentSlot = Self.slot(containing: Date())
@@ -212,7 +221,7 @@ final class LiveTVStore {
     }
 
     private func reloadGuide(api: PlexServerAPI, from start: Date) async {
-        guard let dvr else { return }
+        guard let dvr, !isLoadingGuide else { return }
         let generation = contextGeneration
         isLoadingGuide = true
         defer { if generation == contextGeneration { isLoadingGuide = false } }
@@ -220,6 +229,7 @@ final class LiveTVStore {
         do {
             let list = try await api.liveGrid(epg: dvr.epgIdentifier, from: start, to: end)
             guard generation == contextGeneration, !Task.isCancelled else { return }
+            guideRevision = UUID()
             guideStart = start
             airings = Self.group(list)
             loadedUntil = end
@@ -231,13 +241,15 @@ final class LiveTVStore {
 
     /// Extends the guide to the right as the user scrolls.
     func loadMore(api: PlexServerAPI) async {
-        guard matches(api), let dvr, loadedUntil != .distantPast, !loadingMore, loadedUntil < guideStart.addingTimeInterval(Self.maxAhead) else { return }
+        guard matches(api), let dvr, loadedUntil != .distantPast, !isLoadingGuide, !loadingMore, loadedUntil < guideStart.addingTimeInterval(Self.maxAhead) else { return }
         let generation = contextGeneration
         loadingMore = true
         defer { if generation == contextGeneration { loadingMore = false } }
-        let end = loadedUntil.addingTimeInterval(Self.chunk)
-        guard let list = try? await api.liveGrid(epg: dvr.epgIdentifier, from: loadedUntil, to: end) else { return }
-        guard generation == contextGeneration, !Task.isCancelled else { return }
+        let revision = guideRevision
+        let from = loadedUntil
+        let end = from.addingTimeInterval(Self.chunk)
+        guard let list = try? await api.liveGrid(epg: dvr.epgIdentifier, from: from, to: end) else { return }
+        guard generation == contextGeneration, revision == guideRevision, !Task.isCancelled else { return }
         var merged = airings
         for (ch, items) in Self.group(list) {
             var known = Set((merged[ch] ?? []).map(\.id))

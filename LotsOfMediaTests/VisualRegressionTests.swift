@@ -179,6 +179,23 @@ final class VisualRegressionTests: XCTestCase {
         }
     }
 
+    func testQualityBadgesWrapOnNarrowLayout() async throws {
+        let json = """
+        {"ratingKey":"1","type":"movie","title":"Sample","contentRating":"TV-MA","addedAt":\(Int(Date().timeIntervalSince1970)),
+        "Media":[{"videoResolution":"4k","audioChannels":8,"Part":[{"Stream":[{"streamType":1,"DOVIPresent":true}]}]}]}
+        """
+        let item = try JSONDecoder().decode(PlexMetadata.self, from: Data(json.utf8))
+        let view = QualityChips(item: item)
+            .frame(width: 220, alignment: .leading)
+            .padding().background(.black)
+            .environment(\.dynamicTypeSize, .accessibility2)
+        let seen = try await render(view, name: "Narrow-quality-badges")
+        let new = try XCTUnwrap(seen.first { $0.text.contains("NEW") })
+        let hdr = try XCTUnwrap(seen.first { $0.text.contains("DOLBY") })
+        XCTAssertGreaterThan(hdr.frame.midY, new.frame.midY + 8)
+        assertNothingClipped(seen)
+    }
+
     // MARK: Disconnected
 
     /// Once connecting fails, Home says so and offers the next steps instead of endless placeholders.

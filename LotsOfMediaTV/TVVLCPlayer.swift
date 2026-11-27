@@ -49,6 +49,7 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
     private var index: Int
     private let resumeFirst: Bool
     private let session: TVSession
+    private let playbackAPI: PlexServerAPI?
     var onFinish: () -> Void = {}
     private var markers: [PlexMarker] = []
     private var skipTarget: Int?
@@ -70,6 +71,7 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
         index = request.start
         resumeFirst = request.resume
         self.session = session
+        playbackAPI = session.api
         super.init()
         mediaPlayer.delegate = self
     }
@@ -105,7 +107,7 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
 
     /// `startMs` starts at a given point instead (a retry where it stopped).
     private func load(_ i: Int, resume: Bool, startMs: Int? = nil) async {
-        guard !stopped, let api = session.api, queue.indices.contains(i) else { return onFinish() }
+        guard !stopped, let api = playbackAPI, queue.indices.contains(i) else { return onFinish() }
         index = i
         let id = UUID()
         loadID = id
@@ -135,9 +137,9 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
         upNext = nil; upNextHidden = false; upNextLeft = nil; upNextCountdown.reset()
         // The TV switches to this file's frame rate and HDR format (with Match Content on).
         TVDisplayMatch.apply(for: item, in: drawable)
-        Task { [queue, index, session] in
-            let next = await TVUpNext.next(after: item, queue: queue, index: index, session: session)
-            if current?.ratingKey == item.ratingKey { upNext = next }
+        Task { [queue, index] in
+            let next = await TVUpNext.next(after: item, queue: queue, index: index, api: api)
+            if !stopped, loadID == id { upNext = next }
         }
 
         guard let url = PlaybackDecider.directURL(api: api, item: item) else {
@@ -210,8 +212,9 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
         guard let next = upNext, !stopped else { return }
         upNext = nil; upNextLeft = nil
         ending = true
-        let finished = current, id = sessionID, api = session.api
-        Task { await TVPlaybackReporting.reportFinished(finished, sessionID: id, api: api, fallbackMs: timeMs) }
+        let finished = current, id = sessionID, api = playbackAPI
+        let position = timeMs
+        Task { await TVPlaybackReporting.reportFinished(finished, sessionID: id, api: api, fallbackMs: position) }
         if !(queue.indices.contains(index + 1) && queue[index + 1].ratingKey == next.ratingKey) {
             queue.insert(next, at: index + 1)
         }
@@ -227,7 +230,7 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
         guard !stopped else { return }
         stopped = true
         // Already reported as finished, if it played to its end.
-        let item = ending ? nil : current, time = timeMs, id = sessionID
+        let item = ending ? nil : current, time = timeMs, id = sessionID, api = playbackAPI
         mediaPlayer.stop()
         TVKeepAwake.hold(false, by: self)
         if let sleepObserver { NotificationCenter.default.removeObserver(sleepObserver) }
@@ -236,7 +239,7 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
         TVDisplayMatch.reset(in: drawable)
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         Task { [session] in
-            await TVPlaybackReporting.report(item, state: "stopped", timeMs: time, sessionID: id, session: session)
+            await TVPlaybackReporting.report(item, state: "stopped", timeMs: time, sessionID: id, api: api)
             session.contentVersion += 1
         }
     }
@@ -347,15 +350,15 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
         guard let current, force || state != lastState || Date().timeIntervalSince(lastReport) >= 10 else { return }
         lastState = state
         lastReport = Date()
-        let time = timeMs, id = sessionID
-        Task { [session] in await TVPlaybackReporting.report(current, state: state, timeMs: time, sessionID: id, session: session) }
+        let time = timeMs, id = sessionID, api = playbackAPI
+        Task { await TVPlaybackReporting.report(current, state: state, timeMs: time, sessionID: id, api: api) }
     }
 
     private func itemEnded() {
         guard !ending else { return }
         if TVSleepTimer.shared.shouldStopAtItemEnd() {
             ending = true
-            let finished = current, id = sessionID, api = session.api, position = timeMs
+            let finished = current, id = sessionID, api = playbackAPI, position = timeMs
             Task { [session] in
                 await TVPlaybackReporting.reportFinished(finished, sessionID: id, api: api, fallbackMs: position)
                 session.contentVersion += 1
@@ -364,7 +367,7 @@ final class TVVLCPlaybackController: NSObject, ObservableObject, VLCMediaPlayerD
         }
         if upNext != nil, !upNextHidden { return playNext() }
         ending = true
-        let finished = current, id = sessionID, api = session.api, position = timeMs
+        let finished = current, id = sessionID, api = playbackAPI, position = timeMs
         Task { await TVPlaybackReporting.reportFinished(finished, sessionID: id, api: api, fallbackMs: position) }
         if index + 1 < queue.count, !upNextHidden {
             Task { await load(index + 1, resume: false) }

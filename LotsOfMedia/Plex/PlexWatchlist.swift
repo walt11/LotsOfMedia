@@ -37,18 +37,13 @@ enum PlexWatchlist {
 
     /// The whole Watchlist, most recently added first.
     static func items(token: String) async throws -> [PlexMetadata] {
-        var all: [PlexMetadata] = []
-        let size = 100
-        while true {
-            try Task.checkCancellation()
+        try await PlexServerAPI.collectPages(size: 100) { start, size in
             let data = try await request("library/sections/watchlist/all", query: [
                 URLQueryItem(name: "sort", value: "watchlistedAt:desc"),
-                URLQueryItem(name: "X-Plex-Container-Start", value: "\(all.count)"),
+                URLQueryItem(name: "X-Plex-Container-Start", value: "\(start)"),
                 URLQueryItem(name: "X-Plex-Container-Size", value: "\(size)"),
             ], token: token)
-            let page = try PlexServerAPI.decodeContainer(data)
-            all += page.metadata
-            if page.metadata.count < size || all.count >= (page.totalSize ?? Int.max) { return all }
+            return try PlexServerAPI.decodeContainer(data)
         }
     }
 
@@ -80,38 +75,59 @@ final class WatchlistStore {
     private(set) var error: String?
     /// The account the list belongs to; a profile switch starts again.
     private var token: String?
+    private var identity = UUID()
+    private var request = UUID()
+    private var updating: Set<String> = []
 
     func contains(_ item: PlexMetadata) -> Bool { PlexWatchlist.discoverKey(for: item).map(keys.contains) ?? false }
 
     func refresh(token: String?) async {
-        guard let token else { items = []; keys = []; self.token = nil; return }
-        if token != self.token { items = []; keys = [] }
-        self.token = token
+        if token != self.token {
+            self.token = token
+            identity = UUID()
+            updating = []
+            items = []
+            keys = []
+            error = nil
+        }
+        let id = UUID()
+        request = id
+        guard let token else { isLoading = false; return }
         isLoading = true
-        defer { if token == self.token { isLoading = false } }
+        defer { if id == request { isLoading = false } }
         do {
             let list = try await PlexWatchlist.items(token: token)
-            guard token == self.token else { return }
+            guard !Task.isCancelled, id == request else { return }
             items = list
             keys = Set(list.compactMap { PlexWatchlist.discoverKey(for: $0) })
             error = nil
         } catch {
-            guard token == self.token, !(error is CancellationError) else { return }
+            guard !Task.isCancelled, id == request else { return }
             self.error = error.localizedDescription
         }
     }
 
-    /// Adds or removes the item's movie or show. Shown at once; put back if plex.tv refuses.
+    /// Adds or removes the item's movie or show once Plex confirms the change.
     func toggle(_ item: PlexMetadata, token: String?) async throws {
         guard let token, let key = PlexWatchlist.discoverKey(for: item) else { throw PlexError.notSignedIn }
+        if self.token != token { await refresh(token: token) }
+        guard !Task.isCancelled, self.token == token, updating.insert(key).inserted else { return }
+        let owner = identity
+        defer { if identity == owner { updating.remove(key) } }
         let adding = !keys.contains(key)
-        if adding { keys.insert(key) } else { keys.remove(key); items.removeAll { PlexWatchlist.discoverKey(for: $0) == key } }
-        do {
-            if adding { try await PlexWatchlist.add(key, token: token) } else { try await PlexWatchlist.remove(key, token: token) }
-        } catch {
-            if adding { keys.remove(key) } else { keys.insert(key) }
-            throw error
+        if adding { try await PlexWatchlist.add(key, token: token) }
+        else { try await PlexWatchlist.remove(key, token: token) }
+        guard identity == owner else { return }
+
+        // An older refresh might have started before the server saved this change.
+        request = UUID()
+        isLoading = false
+        if adding {
+            keys.insert(key)
+            await refresh(token: token)
+        } else {
+            keys.remove(key)
+            items.removeAll { PlexWatchlist.discoverKey(for: $0) == key }
         }
-        if adding { await refresh(token: token) }
     }
 }

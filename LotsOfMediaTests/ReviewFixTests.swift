@@ -41,14 +41,50 @@ final class ReviewFixTests: XCTestCase {
         XCTAssertNil(SubtitleParser.cue(at: 5.5, in: cues))
     }
 
-    func testHEVCCanBeLeftOutOfTheStreamingProfile() throws {
+    func testPlexTransportStreamsOnlyAdvertiseH264() throws {
         let video = try JSONDecoder().decode(PlexMetadata.self, from: Data(#"{"ratingKey":"1","type":"movie","title":"M"}"#.utf8))
         let api = PlexServerAPI(baseURL: URL(string: "https://example.com")!, token: nil, serverID: "s")
         func profile(_ allow: Bool) -> String {
             let url = PlaybackDecider.transcodeURL(api: api, item: video, quality: .original, sessionID: "t", isLocal: true, allowHEVC: allow)
             return URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "X-Plex-Client-Profile-Extra" }?.value ?? ""
         }
-        XCTAssertTrue(profile(true).contains("videoCodec=h264,hevc"))
+        XCTAssertTrue(profile(true).contains("videoCodec=h264&"))
+        XCTAssertFalse(profile(true).contains("hevc"))
         XCTAssertTrue(profile(false).contains("videoCodec=h264&"))
+    }
+
+    private func codecItem(container: String, audio: String, selected: String? = nil, kind: String = "track") throws -> PlexMetadata {
+        var part: [String: Any] = ["id": 1, "key": "/file"]
+        if let selected { part["Stream"] = [["id": 1, "streamType": 2, "codec": selected, "selected": true]] }
+        let json: [String: Any] = ["ratingKey": "1", "title": "Codec test", "type": kind,
+            "Media": [["container": container, "videoCodec": "h264", "audioCodec": audio, "Part": [part]]]]
+        return try JSONDecoder().decode(PlexMetadata.self, from: JSONSerialization.data(withJSONObject: json))
+    }
+
+    func testMusicCodecMustBeSupportedEvenInNativeContainer() throws {
+        for codec in ["dts", "truehd", "vorbis", "wmapro"] {
+            let item = try codecItem(container: "m4a", audio: codec)
+            XCTAssertFalse(PlaybackDecider.shouldDirectPlay(item, quality: .original), codec)
+        }
+        for pair in [("m4a", "alac"), ("flac", "flac"), ("wav", "pcm_s24le"), ("aiff", "pcm_s16be"), ("mp3", "mp3")] {
+            XCTAssertTrue(PlaybackDecider.shouldDirectPlay(try codecItem(container: pair.0, audio: pair.1), quality: .original))
+        }
+        XCTAssertFalse(PlaybackDecider.shouldDirectPlay(try codecItem(container: "", audio: "aac"), quality: .original))
+    }
+
+    func testSelectedAudioOverridesMediaSummary() throws {
+        XCTAssertTrue(PlaybackDecider.shouldDirectPlay(try codecItem(container: "mp4", audio: "dts", selected: "aac", kind: "movie"), quality: .original))
+        XCTAssertFalse(PlaybackDecider.shouldDirectPlay(try codecItem(container: "mp4", audio: "aac", selected: "dts", kind: "movie"), quality: .original))
+    }
+
+    func testJellyfinHEVCUsesFragmentedMP4AndFallbackUsesTransportStream() throws {
+        let item = try codecItem(container: "mp4", audio: "aac", kind: "movie")
+        let api = PlexServerAPI(baseURL: URL(string: "https://example.com")!, token: nil, serverID: JellyfinBridge.idPrefix + "test")
+        for allow in [true, false] {
+            let url = PlaybackDecider.transcodeURL(api: api, item: item, quality: .original, sessionID: "test", isLocal: true, allowHEVC: allow)
+            let query = URLComponents(url: url, resolvingAgainstBaseURL: false)!.queryItems!
+            XCTAssertEqual(query.first { $0.name == "SegmentContainer" }?.value, allow ? "mp4" : "ts")
+            XCTAssertEqual(query.first { $0.name == "VideoCodec" }?.value, allow ? "h264,hevc" : "h264")
+        }
     }
 }

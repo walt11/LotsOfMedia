@@ -63,16 +63,24 @@ enum PlaybackDecider {
     /// "DTS audio"). Empty means the file plays as-is.
     static func incompatibilities(media: PlexMedia, kind: PlexMetadata.Kind) -> [String] {
         let container = (media.container ?? media.parts.first?.container ?? "").lowercased()
-        if kind == .track {
-            return nativeAudioContainers.contains(container) || container.isEmpty ? [] : ["\(displayName(container)) audio files"]
-        }
         var problems: [String] = []
+        let audio = media.parts.first?.selectedAudio?.codec ?? media.audioCodec
+        if kind == .track {
+            if !nativeAudioContainers.contains(container) { problems.append("\(displayName(container.isEmpty ? "this" : container)) audio files") }
+            if let audio, !isNativeAudioCodec(audio) { problems.append("\(displayName(audio)) audio") }
+            if media.parts.count > 1 { problems.append("files split into parts") }
+            return problems
+        }
         if !nativeVideoContainers.contains(container) { problems.append("\(displayName(container.isEmpty ? "this" : container)) files") }
         if let v = media.videoCodec?.lowercased(), !nativeVideoCodecs.contains(v) { problems.append("\(displayName(v)) video") }
-        let audio = [media.audioCodec, media.parts.first?.selectedAudio?.codec].compactMap { $0?.lowercased() }
-        if let a = audio.first(where: { !nativeAudioCodecs.contains($0) }) { problems.append("\(displayName(a)) audio") }
+        if let audio, !isNativeAudioCodec(audio) { problems.append("\(displayName(audio)) audio") }
         if media.parts.count > 1 { problems.append("files split into parts") }
         return problems
+    }
+
+    static func isNativeAudioCodec(_ codec: String) -> Bool {
+        let codec = codec.lowercased()
+        return nativeAudioCodecs.contains(codec) || codec.hasPrefix("pcm_")
     }
 
     /// Whether a file plays on this iPhone as-is: in Apple's player, or else in the built-in player.
@@ -125,7 +133,7 @@ enum PlaybackDecider {
             // Sidecar text is drawn by the app; anything else embedded must be MP4 text.
             if let codec = sub.codec?.lowercased(), !nativeTextSubtitleCodecs.contains(codec) { return false }
         }
-        if let audio = media.parts.first?.selectedAudio, let codec = audio.codec?.lowercased(), !nativeAudioCodecs.contains(codec) {
+        if let audio = media.parts.first?.selectedAudio, let codec = audio.codec?.lowercased(), !isNativeAudioCodec(codec) {
             return false
         }
         return true
@@ -133,11 +141,11 @@ enum PlaybackDecider {
 
     static let streamingProfileExtra = streamingProfile(hevc: true)
 
-    /// `hevc: false` asks for H.264 only: Apple's player doesn't accept every HEVC stream the
-    /// server copies into MPEG-TS, so a conversion that failed is retried without it.
-    static func streamingProfile(hevc: Bool) -> String {
+    /// Plex's MPEG-TS HLS route must use H.264: Apple requires fMP4 for HEVC HLS.
+    /// HEVC originals still use direct playback; Jellyfin negotiates fMP4 separately.
+    static func streamingProfile(hevc _: Bool) -> String {
         [
-            "add-transcode-target(type=videoProfile&context=streaming&protocol=hls&container=mpegts&videoCodec=\(hevc ? "h264,hevc" : "h264")&audioCodec=aac,ac3,eac3)",
+            "add-transcode-target(type=videoProfile&context=streaming&protocol=hls&container=mpegts&videoCodec=h264&audioCodec=aac,ac3,eac3)",
             "add-transcode-target(type=musicProfile&context=streaming&protocol=hls&container=mpegts&audioCodec=aac,mp3)",
         ].joined(separator: "+")
     }

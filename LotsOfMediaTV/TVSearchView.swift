@@ -4,21 +4,25 @@ import SwiftUI
 struct TVSearchView: View {
     @Environment(TVSession.self) private var session
     @State private var query = ""
-    @State private var hubs: [PlexHub] = []
-    @State private var searching = false
+    @State private var response: (query: String, hubs: [PlexHub], failed: Bool)?
+    private var trimmed: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private static let supportedKinds: Set<PlexMetadata.Kind> = [.movie, .show, .episode, .season, .album, .artist, .track, .collection]
 
     var body: some View {
+        let result = response.flatMap { $0.query == trimmed ? $0 : nil }
         TVPageScrollView {
             LazyVStack(alignment: .leading, spacing: 50) {
-                if query.isEmpty {
+                if trimmed.count < 2 {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Find your next favorite").font(TVTheme.title(44))
                         Text("Search movies, shows, artists and albums in your library.")
                             .font(.callout).foregroundStyle(TVTheme.secondary)
                     }.padding(.horizontal, 80)
                 }
-                if searching { ProgressView("Searching your library…").padding(.horizontal, 80) }
-                ForEach(hubs) { hub in
+                if trimmed.count >= 2 && result == nil {
+                    ProgressView("Searching your library…").padding(.horizontal, 80)
+                }
+                ForEach(result?.hubs ?? []) { hub in
                     TVRow(title: hub.title) {
                         ForEach(hub.metadata) { item in
                             NavigationLink(value: item.kind == .track ? albumStandIn(for: item) : item) { TVPosterCard(item: item) }.playsOnPlayPause(item)
@@ -26,23 +30,37 @@ struct TVSearchView: View {
                         }
                     }
                 }
-                if !query.isEmpty && hubs.isEmpty && !searching {
-                    Text("No results for “\(query)”").foregroundStyle(.secondary).padding(.horizontal, 80)
+                if result?.failed == true {
+                    Text("Search is unavailable. Try again in a moment.").foregroundStyle(.secondary).padding(.horizontal, 80)
+                } else if result?.hubs.isEmpty == true {
+                    Text("No results for “\(trimmed)”").foregroundStyle(.secondary).padding(.horizontal, 80)
                 }
             }
             .padding(.vertical, 30)
         }
         .searchable(text: $query, prompt: "Movies, shows, music")
-        .task(id: query) {
-            let q = query.trimmingCharacters(in: .whitespaces)
-            guard q.count >= 2, let api = session.api else { hubs = []; return }
-            try? await Task.sleep(for: .milliseconds(350))   // wait for typing to pause
-            guard !Task.isCancelled else { return }
-            searching = true
-            defer { searching = false }
-            let results = (try? await api.search(q)) ?? []
-            guard !Task.isCancelled else { return }
-            hubs = results.filter { hub in hub.metadata.contains { [.movie, .show, .episode, .season, .album, .artist, .track, .collection].contains($0.kind) } }
+        .task(id: trimmed) {
+            response = nil
+            let q = trimmed
+            guard q.count >= 2 else { return }
+            guard let api = session.api else {
+                response = (q, [], true)
+                return
+            }
+            do {
+                try await Task.sleep(for: .milliseconds(350))
+                let results = try await api.search(q)
+                try Task.checkCancellation()
+                let hubs = results.compactMap { hub -> PlexHub? in
+                    var filtered = hub
+                    filtered.metadata = hub.metadata.filter { Self.supportedKinds.contains($0.kind) }
+                    return filtered.metadata.isEmpty ? nil : filtered
+                }
+                response = (q, hubs, false)
+            } catch {
+                guard !Task.isCancelled else { return }
+                response = (q, [], true)
+            }
         }
     }
 

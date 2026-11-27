@@ -12,6 +12,8 @@ struct TVHomeView: View {
     @State private var holiday: Holiday?
     @State private var holidayItems: [PlexMetadata] = []
     @State private var loaded = false
+    @State private var loadFailed = false
+    @State private var retry = 0
     @State private var playing: TVPlayRequest?
     @State private var opening: PlexMetadata?
 
@@ -50,9 +52,19 @@ struct TVHomeView: View {
                                 }
                             }
                         }
-                        if loaded && continueWatching.isEmpty && hubs.isEmpty {
-                            Text("Your library starts here. Add movies, shows or music to your server to see them here.")
-                                .foregroundStyle(.secondary).padding(.horizontal, 80)
+                        if continueWatching.isEmpty && hubs.isEmpty && holidayItems.count < 3 {
+                            if !loaded {
+                                ProgressView("Loading Home…").padding(.horizontal, 80)
+                            } else if loadFailed {
+                                VStack(alignment: .leading, spacing: 16) {
+                                    Text("Couldn't load Home.").foregroundStyle(.secondary)
+                                    Button("Try Again") { retry += 1 }.buttonStyle(TVActionStyle())
+                                }
+                                .padding(.horizontal, 80)
+                            } else {
+                                Text("Your library starts here. Add movies, shows or music to your server to see them here.")
+                                    .foregroundStyle(.secondary).padding(.horizontal, 80)
+                            }
                         }
                     }
                     .padding(.bottom, 60)
@@ -60,7 +72,7 @@ struct TVHomeView: View {
                 }
             }
         }
-        .task(id: "\(session.status == .connected)-\(session.contentVersion)") { await load() }
+        .task(id: "\(session.status == .connected)-\(session.contentVersion)-\(retry)") { await load() }
         .fullScreenCover(item: $playing) { TVPlayerView(request: $0) }
         .navigationDestination(item: $opening) { TVDetailView(item: $0) }
     }
@@ -88,27 +100,33 @@ struct TVHomeView: View {
     private func load() async {
         guard let api = session.api, session.status == .connected else { return }
         let profile = session.user?.uuid
+        let isCurrent = {
+            session.user?.uuid == profile && session.api?.serverID == api.serverID && session.api?.token == api.token
+        }
         async let cw = try? api.continueWatching()
         async let h = try? api.homeHubs()
-        let watching = await cw ?? []
-        // A load that outlived a profile or server switch: its list is the previous one's, and
-        // saving it would put their Continue Watching on the Top Shelf under the new profile.
-        guard !Task.isCancelled, session.user?.uuid == profile, session.api?.serverID == api.serverID else { return }
-        continueWatching = watching
-        saveTopShelf()
-        // Continue Watching is shown above; skip hubs with nothing a TV can open.
-        let shownAbove = ["continuewatching", "ondeck", "inprogress", "home.continue"]
-        hubs = (await h ?? []).filter { hub in
-            let id = (hub.hubIdentifier ?? "").lowercased()
-            return !hub.metadata.isEmpty && !shownAbove.contains { id.contains($0) } && hub.title != "Continue Watching"
-                && hub.metadata.contains { [.movie, .show, .season, .episode, .album, .artist, .collection, .playlist].contains($0.kind) }
+        let (watching, homeHubs) = await (cw, h)
+        // Never publish a response from the previous server or profile.
+        guard !Task.isCancelled, isCurrent() else { return }
+        if let watching {
+            continueWatching = watching
+            saveTopShelf()
         }
+        if let homeHubs {
+            let shownAbove = ["continuewatching", "ondeck", "inprogress", "home.continue"]
+            hubs = homeHubs.filter { hub in
+                let id = (hub.hubIdentifier ?? "").lowercased()
+                return !hub.metadata.isEmpty && !shownAbove.contains { id.contains($0) } && hub.title != "Continue Watching"
+                    && hub.metadata.contains { [.movie, .show, .season, .episode, .album, .artist, .collection, .playlist].contains($0.kind) }
+            }
+        }
+        loadFailed = watching == nil || homeHubs == nil
         spotlight.seed(continueWatching.first ?? hubs.first?.metadata.first)
         loaded = true
         // After the rest, so Home doesn't wait on the searches.
         let upcoming = Holiday.current()
         let picks = upcoming == nil ? [] : await api.holidayPicks(upcoming!)
-        guard !Task.isCancelled, session.api?.serverID == api.serverID else { return }
+        guard !Task.isCancelled, isCurrent() else { return }
         holiday = upcoming
         holidayItems = picks
     }
